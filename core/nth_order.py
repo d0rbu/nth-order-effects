@@ -33,7 +33,16 @@ def nth_order_deltas(
 
     all_deltas = []
 
-    # TODO: dynamic programming algo using previous deltas to compute current deltas
+    # the output of unit f_i is f_i(f_{i-1}(f_{i-2}(...(f_0(x) + x)...) + x) + f_{i-2}(...) + ... + x)
+    # we want to linearly separate the terms so that we can get the contributions of each one
+    # we do this by approximating with a taylor series expansion using the jacobian as follows
+    #
+    #    f_i(x + h) ≈ f_i(x) + J_i(x)h
+    #
+    # => f_i(f_{i-1}(... + x) + f_{i-2}(...) + ... + x) ≈ J_i(x)(f_{i-1}(... + x) + f_{i-2}(...) + ... + f_0(x)) + f_i(x)
+    #                                                   ≈ f_i(x) + J_i(x)f_0(x) + J_i(x)(f_1(f_0(x) + x)) + ...
+    #                                                   ≈ f_i(x) + J_i(x)f_0(x) + J_i(x)J_1(x)f_0(x) + J_i(x)f_1(x)
+    # in order, the above RHS gives us the first order effect of f_i, the second order effect of f_i and f_0, the third order effect of f_i, f_0, and f_1, the second order effect of f_i and f_1, and so on
 
     for delta_order in range(0, n + 1):
         for units in product(range(num_units), repeat=delta_order):
