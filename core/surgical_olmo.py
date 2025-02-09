@@ -1,5 +1,5 @@
 from dataclasses import dataclass, fields, field
-
+import itertools
 from typing import Callable
 
 import torch as th
@@ -178,6 +178,31 @@ class SurgicalOlmo2Attention(Olmo2Attention):
         position_embeddings: th.FloatTensor | None = None,
         attention_mask: th.BoolTensor | None = None,
         activation_mask: bool | list[str] = ["output"],
+        track_activations: bool = True,
+        **kwargs,
+    ) -> SurgicalOlmo2AttentionActivations | th.FloatTensor:
+        if track_activations:
+            return self.forward_track_activation(
+                hidden_states,
+                position_embeddings,
+                attention_mask,
+                activation_mask,
+                **kwargs,
+            )
+        else:
+            return self.forward_no_activation(
+                hidden_states,
+                position_embeddings,
+                attention_mask,
+                **kwargs,
+            )
+
+    def forward_track_activation(
+        self,
+        hidden_states: th.FloatTensor,
+        position_embeddings: th.FloatTensor | None = None,
+        attention_mask: th.BoolTensor | None = None,
+        activation_mask: bool | list[str] = ["output"],
         **kwargs,
     ) -> SurgicalOlmo2AttentionActivations:
         input_shape = hidden_states.shape[:-1]
@@ -239,6 +264,52 @@ class SurgicalOlmo2Attention(Olmo2Attention):
 
         return activations
 
+    def forward_no_activation(
+        self,
+        hidden_states: th.FloatTensor,
+        position_embeddings: th.FloatTensor | None = None,
+        attention_mask: th.BoolTensor | None = None,
+        **kwargs,
+    ) -> th.FloatTensor:
+        input_shape = hidden_states.shape[:-1]
+        hidden_shape = (*input_shape, -1, self.head_dim)
+
+        query_states = self.q_norm(self.q_proj(hidden_states))
+        key_states = self.k_norm(self.k_proj(hidden_states))
+        value_states = self.v_proj(hidden_states)
+
+        query_states = query_states.view(hidden_shape).transpose(1, 2)
+        key_states = key_states.view(hidden_shape).transpose(1, 2)
+        value_states = value_states.view(hidden_shape).transpose(1, 2)
+
+        cos, sin = position_embeddings
+        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+
+        attention_interface: Callable = eager_attention_forward
+        if self.config._attn_implementation != "eager":
+            if self.config._attn_implementation == "sdpa":
+                logger.warning_once(
+                    "`torch.nn.functional.scaled_dot_product_attention` does not support `output_attentions=True`. Falling back to "
+                    'eager attention. This warning can be removed using the argument `attn_implementation="eager"` when loading the model.'
+                )
+            else:
+                attention_interface = ALL_ATTENTION_FUNCTIONS[self.config._attn_implementation]
+
+        output, _ = attention_interface(
+            self,
+            query_states,
+            key_states,
+            value_states,
+            attention_mask,
+            dropout=0.0 if not self.training else self.attention_dropout,
+            scaling=self.scaling,
+            **kwargs,
+        ).reshape(*input_shape, -1).contiguous()
+
+        output = self.o_proj(output)
+
+        return output
+
 class SurgicalOlmo2MLP(Olmo2MLP):
     def __init__(self, config: Olmo2Config):
         super(Olmo2MLP, self).__init__()
@@ -257,10 +328,22 @@ class SurgicalOlmo2MLP(Olmo2MLP):
         self,
         hidden_states: th.FloatTensor,
         activation_mask: bool | list[str] = ["output"],
+        track_activations: bool = True,
+        **kwargs,
+    ) -> SurgicalOlmo2MLPActivations | th.FloatTensor:
+        if track_activations:
+            return self.forward_track_activation(hidden_states, activation_mask)
+        else:
+            return self.forward_no_activation(hidden_states)
+
+    def forward_track_activation(
+        self,
+        hidden_states: th.FloatTensor,
+        activation_mask: bool | list[str] = ["output"],
     ) -> SurgicalOlmo2MLPActivations:
         gate_proj_activation = self.gate_proj(hidden_states)
         gate_proj_nonlinear_activation = self.act_fn(gate_proj_activation)
-        up_proj_activation = self.up_proj(gate_proj_nonlinear_activation)
+        up_proj_activation = self.up_proj(hidden_states)
         hidden_activation = gate_proj_nonlinear_activation * up_proj_activation
         output = self.down_proj(hidden_activation)
 
@@ -274,6 +357,12 @@ class SurgicalOlmo2MLP(Olmo2MLP):
         activations.apply_activation_mask(activation_mask)
 
         return activations
+
+    def forward_no_activation(
+        self,
+        hidden_states: th.FloatTensor,
+    ) -> th.FloatTensor:
+        return self.down_proj(self.act_fn(self.gate_proj(hidden_states)) * self.up_proj(hidden_states))
 
 class SurgicalOlmo2DecoderLayer(Olmo2DecoderLayer):
     def __init__(self, config: Olmo2Config, layer_idx: int):
@@ -292,7 +381,55 @@ class SurgicalOlmo2DecoderLayer(Olmo2DecoderLayer):
         "mlp_activations.output",
     ]
 
+    def attn_unit_forward(
+        self,
+        hidden_states: th.FloatTensor,
+        attention_mask: th.BoolTensor | None = None,
+        position_embeddings: th.FloatTensor | None = None,
+        **kwargs,
+    ) -> th.FloatTensor:
+        return self.post_attention_layernorm(
+            self.self_attn(
+                hidden_states,
+                attention_mask=attention_mask,
+                position_embeddings=position_embeddings,
+                **kwargs,
+            )
+        )
+
+    def mlp_unit_forward(
+        self,
+        hidden_states: th.FloatTensor,
+        **kwargs,
+    ) -> th.FloatTensor:
+        return self.post_feedforward_layernorm(self.mlp(hidden_states, **kwargs))
+
     def forward(
+        self,
+        hidden_states: th.FloatTensor,
+        attention_mask: th.BoolTensor | None = None,
+        position_embeddings: th.FloatTensor | None = None,
+        activation_mask: bool | list[str] = ["output"],
+        track_activations: bool = True,
+        **kwargs,
+    ) -> SurgicalOlmo2DecoderLayerActivations | th.FloatTensor:
+        if track_activations:
+            return self.forward_track_activation(
+                hidden_states,
+                attention_mask,
+                position_embeddings,
+                activation_mask,
+                **kwargs,
+            )
+        else:
+            return self.forward_no_activation(
+                hidden_states,
+                attention_mask,
+                position_embeddings,
+                **kwargs,
+            )
+
+    def forward_track_activation(
         self,
         hidden_states: th.FloatTensor,
         attention_mask: th.BoolTensor | None = None,
@@ -333,6 +470,26 @@ class SurgicalOlmo2DecoderLayer(Olmo2DecoderLayer):
 
         return activations
 
+    def forward_no_activation(
+        self,
+        hidden_states: th.FloatTensor,
+        attention_mask: th.BoolTensor | None = None,
+        position_embeddings: th.FloatTensor | None = None,
+    ) -> th.FloatTensor:
+        residual = hidden_states
+
+        attention_output = self.self_attn(
+            hidden_states=residual,
+            position_embeddings=position_embeddings,
+            attention_mask=attention_mask,
+            track_activations=False,
+        )
+        residual += self.post_attention_layernorm(attention_output)
+
+        residual += self.post_feedforward_layernorm(self.mlp(residual, track_activations=False))
+
+        return residual
+
 class SurgicalOlmo2RotaryEmbedding(Olmo2RotaryEmbedding):
     pass
 
@@ -357,6 +514,11 @@ class SurgicalOlmo2Model(SurgicalOlmo2PreTrainedModel, Olmo2Model):
         # Initialize weights and apply final processing
         self.post_init()
 
+    def unit_forwards(self) -> list[Callable]:
+        attn_and_mlp_forwards = [(layer.attn_unit_forward, layer.mlp_unit_forward) for layer in self.layers]
+        # flatten
+        return list(itertools.chain(*attn_and_mlp_forwards))
+
     REQUIRED_ACTIVATION_MASK = [
         "output",
         "layer_activations.*.output",
@@ -365,6 +527,28 @@ class SurgicalOlmo2Model(SurgicalOlmo2PreTrainedModel, Olmo2Model):
     ]
 
     def forward(
+        self,
+        input_ids: th.LongTensor | None = None,
+        inputs_embeds: th.FloatTensor | None = None,
+        activation_mask: bool | list[str] = ["output"],
+        track_activations: bool = True,
+        **kwargs,
+    ) -> SurgicalOlmo2ModelActivations | th.FloatTensor:
+        if track_activations:
+            return self.forward_track_activation(
+                input_ids=input_ids,
+                inputs_embeds=inputs_embeds,
+                activation_mask=activation_mask,
+                **kwargs,
+            )
+        else:
+            return self.forward_no_activation(
+                input_ids=input_ids,
+                inputs_embeds=inputs_embeds,
+                **kwargs,
+            )
+
+    def forward_track_activation(
         self,
         input_ids: th.LongTensor | None = None,
         inputs_embeds: th.FloatTensor | None = None,
@@ -431,6 +615,49 @@ class SurgicalOlmo2Model(SurgicalOlmo2PreTrainedModel, Olmo2Model):
 
         return activations
 
+    def forward_no_activation(
+        self,
+        input_ids: th.LongTensor | None = None,
+        inputs_embeds: th.FloatTensor | None = None,
+        **kwargs,
+    ) -> th.FloatTensor:
+        if (input_ids is None) ^ (inputs_embeds is not None):
+            raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
+
+        if inputs_embeds is None:
+            inputs_embeds = self.embed_tokens(input_ids)
+
+        position_ids = th.arange(
+            0, inputs_embeds.shape[1], device=inputs_embeds.device, dtype=th.long
+        )
+        causal_mask = self._update_causal_mask(
+            None, inputs_embeds, position_ids, None, True
+        )
+
+        hidden_states = inputs_embeds
+
+        # create position embeddings to be shared across the decoder layers
+        position_embeddings = self.rotary_emb(hidden_states, position_ids.unsqueeze(0))
+
+        for decoder_layer in self.layers[: self.config.num_hidden_layers]:
+            if self.gradient_checkpointing and self.training:
+                hidden_states = self._gradient_checkpointing_func(
+                    decoder_layer.__call__,
+                    hidden_states,
+                    attention_mask=causal_mask,
+                    position_embeddings=position_embeddings,
+                    track_activations=False,
+                )
+            else:
+                hidden_states = decoder_layer(
+                    hidden_states,
+                    attention_mask=causal_mask,
+                    position_embeddings=position_embeddings,
+                    track_activations=False,
+                )
+
+        return self.norm(hidden_states)
+
 class SurgicalOlmo2ForCausalLM(SurgicalOlmo2PreTrainedModel, Olmo2ForCausalLM):
     def __init__(self, config: Olmo2Config):
         SurgicalOlmo2PreTrainedModel.__init__(self, config)
@@ -450,6 +677,31 @@ class SurgicalOlmo2ForCausalLM(SurgicalOlmo2PreTrainedModel, Olmo2ForCausalLM):
     ]
 
     def forward(
+        self,
+        input_ids: th.LongTensor | None = None,
+        inputs_embeds: th.FloatTensor | None = None,
+        labels: th.LongTensor | None = None,
+        activation_mask: bool | list[str] = ["logits", "loss"],
+        track_activations: bool = True,
+        **kwargs,
+    ) -> SurgicalOlmo2ForCausalLMActivations | th.FloatTensor:
+        if track_activations:
+            return self.forward_track_activation(
+                input_ids=input_ids,
+                inputs_embeds=inputs_embeds,
+                labels=labels,
+                activation_mask=activation_mask,
+                **kwargs,
+            )
+        else:
+            return self.forward_no_activation(
+                input_ids=input_ids,
+                inputs_embeds=inputs_embeds,
+                labels=labels,
+                **kwargs,
+    )
+
+    def forward_track_activation(
         self,
         input_ids: th.LongTensor | None = None,
         inputs_embeds: th.FloatTensor | None = None,
@@ -484,3 +736,22 @@ class SurgicalOlmo2ForCausalLM(SurgicalOlmo2PreTrainedModel, Olmo2ForCausalLM):
         activations.apply_activation_mask(activation_mask)
 
         return activations
+
+    def forward_no_activation(
+        self,
+        input_ids: th.LongTensor | None = None,
+        inputs_embeds: th.FloatTensor | None = None,
+        labels: th.LongTensor | None = None,
+        **kwargs,
+    ) -> th.FloatTensor:
+        model_output = self.model(
+            input_ids=input_ids,
+            inputs_embeds=inputs_embeds,
+            track_activations=False,
+            **kwargs,
+        )
+
+        logits = self.lm_head(model_output)
+        loss = self.loss_function(logits=logits, labels=labels, vocab_size=self.config.vocab_size, **kwargs) if labels is not None else None
+
+        return loss
