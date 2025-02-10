@@ -14,6 +14,7 @@ from core.surgical_olmo import SurgicalOlmo2ForCausalLM
 class NthOrderDelta:
     delta: th.Tensor
     unit_idx: int
+    parent: "NthOrderDelta" | None = None
     children: list["NthOrderDelta"] = field(default_factory=list)
 
     def __getitem__(self, indices) -> "NthOrderDelta":
@@ -44,7 +45,7 @@ class NthOrderDelta:
         else:
             self.children[absolute_idx][rest] = value
 
-def compute_unit_jacobians_and_outputs(model: SurgicalOlmo2ForCausalLM, inputs: dict) -> tuple[th.Tensor, th.Tensor]:
+def compute_unit_jacobians_and_outputs(model: SurgicalOlmo2ForCausalLM, inputs: dict) -> tuple[th.Tensor, th.Tensor, th.Tensor]:
     input_embeddings = model.get_input_embeddings()
     inputs_embeds = input_embeddings(inputs["input_ids"])
     attention_mask = inputs["attention_mask"]  # B, T
@@ -87,14 +88,14 @@ def compute_unit_jacobians_and_outputs(model: SurgicalOlmo2ForCausalLM, inputs: 
 
         outputs[unit_idx, batch_idx, seq_idx] = output_embed[0, -1]
 
-    return jacobians, outputs
+    return jacobians, outputs, inputs_embeds
 
 def compute_nth_order_deltas(
     model: SurgicalOlmo2ForCausalLM,
     tokenizer: PreTrainedTokenizerBase,
     dataset: list[str],
     stop_n: int = 2,
-) -> NthOrderDelta:
+) -> tuple[NthOrderDelta, th.Tensor, dict]:
     """Compute up to the max_nth order deltas for the given model and dataset.
 
     Args:
@@ -105,8 +106,14 @@ def compute_nth_order_deltas(
 
     Returns:
         NthOrderDelta: The tree of nth order deltas for the given model and dataset.
+        th.Tensor: The final hidden state of the model before the final norm and output layer.
+        dict: The inputs to the model.
     """
     inputs = tokenizer(dataset, return_tensors="pt", padding=True, truncation=True)
+
+    labels = th.full_like(inputs["input_ids"], -100)
+    labels[input["attention_mask"]] = inputs["input_ids"][input["attention_mask"]]
+    inputs["labels"] = labels
 
     # the output of unit f_i is f_i(f_{i-1}(f_{i-2}(...(f_0(x) + x)...) + x) + f_{i-2}(...) + ... + x)
     # we want to linearly separate the terms so that we can get the contributions of each one
@@ -122,19 +129,25 @@ def compute_nth_order_deltas(
     #
     #    J_{i_n}(x)J_{i_{n-1}}(x)...J_{i_1}(x)f_{i_0}(x)
 
-    jacobians, outputs = compute_unit_jacobians_and_outputs(model, inputs)
+    jacobians, outputs, base = compute_unit_jacobians_and_outputs(model, inputs)
+    final_residual = model(
+        **inputs,
+        activation_mask=["model_activations.layer_activations.*.output"],
+    ).model_activations.layer_activations[-1].output
 
     return compute_nth_order_deltas_recursive(
         jacobians,
         outputs,
+        base,
         max_depth=stop_n,
         device=model.device,
-    )
+    ), final_residual, inputs
 
 # hehe bfs
 def compute_nth_order_deltas_recursive(
     jacobians: th.Tensor,
     outputs: th.Tensor,
+    base: th.Tensor,
     nth_order_delta: NthOrderDelta | None = None,
     depth: int = 0,
     max_depth: int = 1,
@@ -143,14 +156,15 @@ def compute_nth_order_deltas_recursive(
     assert depth >= 0, "Depth must be non-negative"
     assert max_depth >= 0, "Max depth must be non-negative"
     assert jacobians.shape[:2] == outputs.shape[:2], "Jacobian and output unit sizes and batch sizes must match"
+    assert outputs.shape[1:] == base.shape, "Output and base unit sizes must match"
 
     num_units, batch_size, seq_len, hidden_size = outputs.shape
 
     if depth >= max_depth:
         return nth_order_delta
     elif depth == 0:
-        zeroth_order_delta = NthOrderDelta(delta=th.zeros(batch_size, seq_len, hidden_size, device=device), unit_idx=-1)
-        return compute_nth_order_deltas_recursive(jacobians, outputs, zeroth_order_delta, depth + 1, max_depth, device)
+        zeroth_order_delta = NthOrderDelta(delta=base, unit_idx=-1)
+        return compute_nth_order_deltas_recursive(jacobians, outputs, base, zeroth_order_delta, depth + 1, max_depth, device)
 
     current_unit_idx = nth_order_delta.unit_idx
 
@@ -160,7 +174,7 @@ def compute_nth_order_deltas_recursive(
         else:
             new_delta = jacobians[unit_idx] @ nth_order_delta.delta
 
-        new_nth_order_delta = NthOrderDelta(delta=new_delta, unit_idx=unit_idx)
-        nth_order_delta.children.append(compute_nth_order_deltas_recursive(jacobians, outputs, new_nth_order_delta, depth + 1, max_depth, device))
+        new_nth_order_delta = NthOrderDelta(delta=new_delta, unit_idx=unit_idx, parent=nth_order_delta)
+        nth_order_delta.children.append(compute_nth_order_deltas_recursive(jacobians, outputs, base, new_nth_order_delta, depth + 1, max_depth, device))
 
     return nth_order_delta
