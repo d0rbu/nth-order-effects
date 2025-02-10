@@ -5,6 +5,7 @@ from typing import Callable
 import arguably
 import torch as th
 import torch.nn as nn
+import matplotlib.pyplot as plt
 
 from core.data import get_dataset
 from core.model import get_model_and_tokenizer
@@ -40,6 +41,8 @@ def main(
         delta_losses = compute_losses(null_input, deltas, loss_fn, output_module)
 
     sorted_delta_losses = sorted(delta_losses, key=lambda x: x.loss)
+
+    # TODO: plot a bar chart of the delta losses, labelling by delta_loss.nth_order_delta.unit_indices()
 
 def compute_losses(
     base: th.Tensor,

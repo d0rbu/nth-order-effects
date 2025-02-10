@@ -45,6 +45,16 @@ class NthOrderDelta:
         else:
             self.children[absolute_idx][rest] = value
 
+    def unit_indices(self) -> list[int]:
+        current_node = self
+        indices = []
+
+        while current_node is not None:
+            indices = [current_node.unit_idx] + indices
+            current_node = current_node.parent
+
+        return indices[1:]
+
 def compute_unit_jacobians_and_outputs(model: SurgicalOlmo2ForCausalLM, inputs: dict) -> tuple[th.Tensor, th.Tensor, th.Tensor]:
     input_embeddings = model.get_input_embeddings()
     inputs_embeds = input_embeddings(inputs["input_ids"])
