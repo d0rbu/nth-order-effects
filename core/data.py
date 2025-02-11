@@ -20,6 +20,9 @@ DATASETS = {
         # 0, 1, 64, 65, 128, 129...
         selection=chain(*[range(source_idx * 64, source_idx * 64 + 2) for source_idx in range(7)])
     ),
+    "redpajama-1": DatasetConfig(
+        selection=range(1)
+    ),
 }
 
 

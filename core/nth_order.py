@@ -1,21 +1,21 @@
 from itertools import product, combinations
-from copy import deepcopy
+from heapq import heapify, heappop, heappush
 from dataclasses import dataclass, field
+from typing import Iterable
 
 import torch as th
-from torch.func import vmap, jacrev, functional_call
 from datasets import Dataset, load_dataset
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
 from core.surgical_olmo import SurgicalOlmo2ForCausalLM
 
 
-@dataclass
+@dataclass(order=True)
 class NthOrderDelta:
-    delta: th.Tensor
     unit_idx: int
-    parent: "NthOrderDelta" | None = None
-    children: list["NthOrderDelta"] = field(default_factory=list)
+    delta: th.Tensor | None = field(default=None, compare=False)
+    parent: "NthOrderDelta | None" = field(default=None, compare=False)
+    children: list["NthOrderDelta"] = field(default_factory=list, compare=False)
 
     def __getitem__(self, indices) -> "NthOrderDelta":
         if not isinstance(indices, tuple):
@@ -55,50 +55,50 @@ class NthOrderDelta:
 
         return indices[1:]
 
-def compute_unit_jacobians_and_outputs(model: SurgicalOlmo2ForCausalLM, inputs: dict) -> tuple[th.Tensor, th.Tensor, th.Tensor]:
+def compute_unit_jacobians_and_outputs(model: SurgicalOlmo2ForCausalLM, inputs: dict) -> tuple[Iterable[Iterable[tuple[int, int, th.Tensor, th.Tensor]]], th.Tensor]:
     input_embeddings = model.get_input_embeddings()
     inputs_embeds = input_embeddings(inputs["input_ids"])
     attention_mask = inputs["attention_mask"]  # B, T
 
     unit_forwards = model.model.unit_forwards()
-    num_units = len(unit_forwards)
 
     batch_size, seq_len, hidden_size = inputs_embeds.shape
 
-    jacobians = th.empty(num_units, batch_size, seq_len, hidden_size, hidden_size, device=model.device)
-    outputs = th.empty(num_units, batch_size, seq_len, hidden_size, device=model.device)
+    jacobian = th.empty(hidden_size, hidden_size, device=model.device)
+    output = th.empty(batch_size, seq_len, hidden_size, device=model.device)
 
-    # batched jacobians and forwards for mlp units
-    for unit_idx in range(1, num_units, 2):
-        unit_forward = unit_forwards[unit_idx]
-        debatched_inputs_embeds = inputs_embeds[attention_mask]  # T', D where T' is all the tokens across all batches
+    def unit_jacobian_output_generator():
+        for unit_idx, unit_forward in enumerate(unit_forwards):
+            output[attention_mask] = unit_forward(inputs_embeds[attention_mask])
 
-        def functional_unit_forward(inputs_embeds):
-            return functional_call(unit_forward, inputs_embeds)
+            if unit_idx % 2 == 0:  # attention unit
+                def jacobian_output_generator():
+                    for batch_idx, seq_idx in attention_mask.nonzero():
+                        for i in range(hidden_size):
+                            jacobian[i] = th.autograd.grad(
+                                output[batch_idx, seq_idx, i],
+                                inputs_embeds[batch_idx, seq_idx],
+                                grad_outputs=th.ones_like(output[batch_idx, seq_idx, i]),
+                                retain_graph=True,
+                                create_graph=True,
+                            )[0]
 
-        debatched_jacobians = vmap(jacrev(functional_unit_forward))  # T', D, D
-        jacobians[unit_idx, attention_mask] = debatched_jacobians(debatched_inputs_embeds)
-        outputs[unit_idx, attention_mask] = unit_forward(debatched_inputs_embeds)
+                        yield batch_idx, seq_idx, jacobian, output[batch_idx, seq_idx]
+            else:  # mlp unit
+                def jacobian_output_generator():
+                    for batch_idx, seq_idx in attention_mask.nonzero():
+                        jacobian.copy_(
+                            th.autograd.functional.jacobian(
+                                unit_forward,
+                                inputs_embeds[batch_idx, seq_idx],
+                            )
+                        )
 
-    # we have to do it this way for attention because we cant batch by sequence length
-    # meaning we would end up with a massive inefficient block diagonal matrix
-    for unit_idx, (batch_idx, seq_idx) in product(range(0, num_units, 2), attention_mask.nonzero()):
-        unit_forward = unit_forwards[unit_idx]
-        input_embed = inputs_embeds[batch_idx, :seq_idx + 1].unsqueeze(0)  # 1, S, D where S is the sequence length based on the index of this token
-        output_embed = unit_forward(input_embed)  # 1, S, D
+                        yield batch_idx, seq_idx, jacobian, output[batch_idx, seq_idx]
 
-        for i in range(hidden_size):
-            jacobians[unit_idx, batch_idx, seq_idx, i] = th.autograd.grad(
-                output_embed[0, -1, i],
-                input_embed[0, -1],
-                grad_outputs=th.ones_like(output_embed[0, -1, i]),
-                retain_graph=True,
-                create_graph=True,
-            )[0]
+            yield unit_idx, jacobian_output_generator()
 
-        outputs[unit_idx, batch_idx, seq_idx] = output_embed[0, -1]
-
-    return jacobians, outputs, inputs_embeds
+    return unit_jacobian_output_generator(), inputs_embeds
 
 def compute_nth_order_deltas(
     model: SurgicalOlmo2ForCausalLM,
@@ -119,10 +119,13 @@ def compute_nth_order_deltas(
         th.Tensor: The final hidden state of the model before the final norm and output layer.
         dict: The inputs to the model.
     """
+    assert stop_n > 0, "stop_n must be greater than 0"
+
     inputs = tokenizer(dataset, return_tensors="pt", padding=True, truncation=True)
+    inputs["attention_mask"] = inputs["attention_mask"].bool()  # why tf is this an int64
 
     labels = th.full_like(inputs["input_ids"], -100)
-    labels[input["attention_mask"]] = inputs["input_ids"][input["attention_mask"]]
+    labels[inputs["attention_mask"]] = inputs["input_ids"][inputs["attention_mask"]]
     inputs["labels"] = labels
 
     # the output of unit f_i is f_i(f_{i-1}(f_{i-2}(...(f_0(x) + x)...) + x) + f_{i-2}(...) + ... + x)
@@ -139,52 +142,69 @@ def compute_nth_order_deltas(
     #
     #    J_{i_n}(x)J_{i_{n-1}}(x)...J_{i_1}(x)f_{i_0}(x)
 
-    jacobians, outputs, base = compute_unit_jacobians_and_outputs(model, inputs)
+    num_units = len(model.model.unit_forwards())
+
+    jacobians_and_outputs, base = compute_unit_jacobians_and_outputs(model, inputs)
     final_residual = model(
         **inputs,
         activation_mask=["model_activations.layer_activations.*.output"],
     ).model_activations.layer_activations[-1].output
 
-    return compute_nth_order_deltas_recursive(
-        jacobians,
-        outputs,
-        base,
-        max_depth=stop_n,
-        device=model.device,
-    ), final_residual, inputs
+    zeroth_order_delta, units_deltas = empty_nth_order_deltas_recursive(delta=base, num_units=num_units, max_depth=stop_n)
 
-# hehe bfs
-def compute_nth_order_deltas_recursive(
-    jacobians: th.Tensor,
-    outputs: th.Tensor,
-    base: th.Tensor,
-    nth_order_delta: NthOrderDelta | None = None,
+    for unit_deltas, jacobian_output_generator in zip(units_deltas, jacobians_and_outputs):
+        for batch_idx, seq_idx, jacobian, output in jacobian_output_generator:
+            for unit_delta in unit_deltas:
+                if unit_delta.delta is None:
+                    unit_delta.delta = th.empty_like(base)
+
+                if unit_delta.parent is zeroth_order_delta:
+                    unit_delta.delta[batch_idx, seq_idx] = output
+                else:
+                    # because we go through this in order of units, the parent is guaranteed to be computed
+                    # since the parent's unit_idx < current unit_idx
+                    unit_delta.deltas[batch_idx, seq_idx] = jacobian @ unit_delta.parent.delta[batch_idx, seq_idx]
+
+    return zeroth_order_delta, final_residual, inputs
+
+
+# hehe dfs
+def empty_nth_order_deltas_recursive(
+    delta: th.Tensor | None = None,
     depth: int = 0,
+    unit_idx: int = -1,
+    num_units: int = 64,
+    unit_deltas: list[list[NthOrderDelta]] | None = None,
     max_depth: int = 1,
-    device: th.device = th.device("cpu"),
-) -> NthOrderDelta:
-    assert depth >= 0, "Depth must be non-negative"
-    assert max_depth >= 0, "Max depth must be non-negative"
-    assert jacobians.shape[:2] == outputs.shape[:2], "Jacobian and output unit sizes and batch sizes must match"
-    assert outputs.shape[1:] == base.shape, "Output and base unit sizes must match"
+) -> tuple[NthOrderDelta, list[list[NthOrderDelta]]]:
+    if depth == 0:
+        assert delta is not None, "base must be provided if depth is 0"
+        assert unit_deltas is None, "unit_deltas must be None if depth is 0"
+        assert unit_idx == -1, "unit_idx must be -1 if depth is 0"
 
-    num_units, batch_size, seq_len, hidden_size = outputs.shape
+        nth_order_delta = NthOrderDelta(unit_idx=-1, delta=delta)
+        unit_deltas = [[] for _ in range(num_units)]
+        delta = None
+    else:
+        assert delta is None, "base must be None if depth is not 0"
+        assert unit_deltas is not None, "unit_deltas must be provided if depth is not 0"
+        assert unit_idx > -1, "unit_idx must be non-negative if depth is not 0"
+
+        nth_order_delta = NthOrderDelta(unit_idx=unit_idx)
+        unit_deltas[unit_idx].append(nth_order_delta)
 
     if depth >= max_depth:
-        return nth_order_delta
-    elif depth == 0:
-        zeroth_order_delta = NthOrderDelta(delta=base, unit_idx=-1)
-        return compute_nth_order_deltas_recursive(jacobians, outputs, base, zeroth_order_delta, depth + 1, max_depth, device)
+        return nth_order_delta, unit_deltas
 
-    current_unit_idx = nth_order_delta.unit_idx
+    for new_unit_idx in range(unit_idx + 1, num_units):
+        new_nth_order_delta = empty_nth_order_deltas_recursive(
+            delta=delta,
+            depth=depth + 1,
+            unit_idx=new_unit_idx,
+            num_units=num_units,
+            unit_deltas=unit_deltas,
+            max_depth=max_depth,
+        )
+        nth_order_delta.children.append(new_nth_order_delta)
 
-    for unit_idx in range(current_unit_idx + 1, num_units):
-        if depth == 1:
-            new_delta = outputs[unit_idx]
-        else:
-            new_delta = jacobians[unit_idx] @ nth_order_delta.delta
-
-        new_nth_order_delta = NthOrderDelta(delta=new_delta, unit_idx=unit_idx, parent=nth_order_delta)
-        nth_order_delta.children.append(compute_nth_order_deltas_recursive(jacobians, outputs, base, new_nth_order_delta, depth + 1, max_depth, device))
-
-    return nth_order_delta
+    return nth_order_delta, unit_deltas

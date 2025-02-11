@@ -28,7 +28,7 @@ def main(
     dataset = get_dataset(dataset_name)
     model, tokenizer = get_model_and_tokenizer(checkpoint_idx)
 
-    deltas, final_state, inputs = compute_nth_order_deltas(model, tokenizer, dataset, n=n)
+    deltas, final_state, inputs = compute_nth_order_deltas(model, tokenizer, dataset, stop_n=n)
     null_input = th.zeros_like(deltas.delta)
 
     loss_fn = partial(model.loss_function, labels=inputs["labels"], vocab_size=model.config.vocab_size)
@@ -42,7 +42,7 @@ def main(
 
     sorted_delta_losses = sorted(delta_losses, key=lambda x: x.loss)
 
-    # TODO: plot a bar chart of the delta losses, labelling by delta_loss.nth_order_delta.unit_indices()
+    plt.bar(range(len(sorted_delta_losses)), [x.loss for x in sorted_delta_losses], tick_label=[x.nth_order_delta.unit_indices() for x in sorted_delta_losses])
 
 def compute_losses(
     base: th.Tensor,
