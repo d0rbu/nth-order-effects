@@ -2,6 +2,7 @@ from itertools import product, combinations
 from heapq import heapify, heappop, heappush
 from dataclasses import dataclass, field
 from typing import Iterable
+from tqdm import tqdm
 
 import torch as th
 from datasets import Dataset, load_dataset
@@ -143,6 +144,7 @@ def compute_nth_order_deltas(
     #    J_{i_n}(x)J_{i_{n-1}}(x)...J_{i_1}(x)f_{i_0}(x)
 
     num_units = len(model.model.unit_forwards())
+    total_iterations = num_units * inputs["attention_mask"].sum().item()
 
     jacobians_and_outputs, base = compute_unit_jacobians_and_outputs(model, inputs)
     final_residual = model(
@@ -152,18 +154,21 @@ def compute_nth_order_deltas(
 
     zeroth_order_delta, units_deltas = empty_nth_order_deltas_recursive(delta=base, num_units=num_units, max_depth=stop_n)
 
-    for unit_deltas, jacobian_output_generator in zip(units_deltas, jacobians_and_outputs):
-        for batch_idx, seq_idx, jacobian, output in jacobian_output_generator:
-            for unit_delta in unit_deltas:
-                if unit_delta.delta is None:
-                    unit_delta.delta = th.empty_like(base)
+    with tqdm(total=total_iterations, desc="Computing nth order deltas") as progress_bar:
+        for unit_deltas, jacobian_output_generator in zip(units_deltas, jacobians_and_outputs):
+            for batch_idx, seq_idx, jacobian, output in jacobian_output_generator:
+                for unit_delta in unit_deltas:
+                    if unit_delta.delta is None:
+                        unit_delta.delta = th.empty_like(base)
 
-                if unit_delta.parent is zeroth_order_delta:
-                    unit_delta.delta[batch_idx, seq_idx] = output
-                else:
-                    # because we go through this in order of units, the parent is guaranteed to be computed
-                    # since the parent's unit_idx < current unit_idx
-                    unit_delta.deltas[batch_idx, seq_idx] = jacobian @ unit_delta.parent.delta[batch_idx, seq_idx]
+                    if unit_delta.parent is zeroth_order_delta:
+                        unit_delta.delta[batch_idx, seq_idx] = output
+                    else:
+                        # because we go through this in order of units, the parent is guaranteed to be computed
+                        # since the parent's unit_idx < current unit_idx
+                        unit_delta.deltas[batch_idx, seq_idx] = jacobian @ unit_delta.parent.delta[batch_idx, seq_idx]
+
+                    progress_bar.update(1)
 
     return zeroth_order_delta, final_residual, inputs
 
