@@ -17,18 +17,35 @@ class DeltaLoss:
     nth_order_delta: NthOrderDelta
     loss: float
 
+DTYPE_MAP = {
+    "bf16": th.bfloat16,
+    "fp32": th.float32,
+    "fp16": th.float16,
+}
+
 @th.no_grad()
 @arguably.command
 def main(
     *args,
     dataset_name: str = "redpajama-nano",
     checkpoint_idx: int | None = None,
-    n: int = 1,
+    maxlen: int = 512,
+    device: str = "auto",
+    dtype: str = "bf16",
+    load_in_8bit: bool = False,
+    load_in_4bit: bool = False,
+    n: int = 2,
 ) -> None:
     dataset = get_dataset(dataset_name)
-    model, tokenizer = get_model_and_tokenizer(checkpoint_idx)
+    model_kwargs = {
+        "device_map": device,
+        "torch_dtype": DTYPE_MAP[dtype],
+        "load_in_8bit": load_in_8bit,
+        "load_in_4bit": load_in_4bit,
+    }
+    model, tokenizer = get_model_and_tokenizer(checkpoint_idx, model_kwargs=model_kwargs)
 
-    deltas, final_state, inputs = compute_nth_order_deltas(model, tokenizer, dataset, stop_n=n)
+    deltas, final_state, inputs = compute_nth_order_deltas(model, tokenizer, dataset, stop_n=n, max_token_length=maxlen)
     null_input = th.zeros_like(deltas.delta)
 
     loss_fn = partial(model.loss_function, labels=inputs["labels"], vocab_size=model.config.vocab_size)

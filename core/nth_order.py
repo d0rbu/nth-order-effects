@@ -106,6 +106,7 @@ def compute_nth_order_deltas(
     tokenizer: PreTrainedTokenizerBase,
     dataset: list[str],
     stop_n: int = 2,
+    max_token_length: int = 512,
 ) -> tuple[NthOrderDelta, th.Tensor, dict]:
     """Compute up to the max_nth order deltas for the given model and dataset.
 
@@ -122,7 +123,7 @@ def compute_nth_order_deltas(
     """
     assert stop_n > 0, "stop_n must be greater than 0"
 
-    inputs = tokenizer(dataset, return_tensors="pt", padding=True, truncation=True)
+    inputs = tokenizer(dataset, return_tensors="pt", padding=True, truncation=True, max_length=max_token_length)
     inputs["attention_mask"] = inputs["attention_mask"].bool()  # why tf is this an int64
 
     labels = th.full_like(inputs["input_ids"], -100)
@@ -202,7 +203,7 @@ def empty_nth_order_deltas_recursive(
         return nth_order_delta, unit_deltas
 
     for new_unit_idx in range(unit_idx + 1, num_units):
-        new_nth_order_delta = empty_nth_order_deltas_recursive(
+        new_nth_order_delta, _ = empty_nth_order_deltas_recursive(
             delta=delta,
             depth=depth + 1,
             unit_idx=new_unit_idx,
@@ -210,6 +211,7 @@ def empty_nth_order_deltas_recursive(
             unit_deltas=unit_deltas,
             max_depth=max_depth,
         )
+        new_nth_order_delta.parent = nth_order_delta
         nth_order_delta.children.append(new_nth_order_delta)
 
     return nth_order_delta, unit_deltas
