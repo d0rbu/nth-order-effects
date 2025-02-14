@@ -49,7 +49,6 @@ def get_model_and_tokenizer(checkpoint_idx: int | None = None, model_kwargs: dic
         model = stage1_checkpoints[checkpoint_idx].load_model(model_kwargs)
 
     # clone the model to the surgical version by getting and setting the state dict
-    surgical_model = SurgicalOlmo2ForCausalLM(model.config)
-    surgical_model.load_state_dict(model.state_dict())
+    surgical_model = SurgicalOlmo2ForCausalLM.from_olmo2_for_causal_lm(model)
 
     return surgical_model, tokenizer

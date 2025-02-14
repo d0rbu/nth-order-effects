@@ -23,14 +23,13 @@ DTYPE_MAP = {
     "fp16": th.float16,
 }
 
-@th.no_grad()
 @arguably.command
 def main(
     *args,
     dataset_name: str = "redpajama-nano",
     checkpoint_idx: int | None = None,
     maxlen: int = 512,
-    device: str = "auto",
+    device: str = "cuda",
     dtype: str = "bf16",
     load_in_8bit: bool = False,
     load_in_4bit: bool = False,

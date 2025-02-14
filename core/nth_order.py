@@ -58,46 +58,69 @@ class NthOrderDelta:
 
 def compute_unit_jacobians_and_outputs(model: SurgicalOlmo2ForCausalLM, inputs: dict) -> tuple[Iterable[Iterable[tuple[int, int, th.Tensor, th.Tensor]]], th.Tensor]:
     input_embeddings = model.get_input_embeddings()
-    inputs_embeds = input_embeddings(inputs["input_ids"])
+    inputs_embeds = input_embeddings(inputs["input_ids"].to(model.device)).detach()
+    inputs_embeds.requires_grad = True
     attention_mask = inputs["attention_mask"]  # B, T
+
+    position_ids = th.arange(
+        0, inputs_embeds.shape[1], device=inputs_embeds.device, dtype=th.long
+    )
+    position_embeddings = model.model.rotary_emb(inputs_embeds, position_ids.unsqueeze(0))
+    causal_mask = model.model._update_causal_mask(
+        None, inputs_embeds, position_ids, None, True
+    )
 
     unit_forwards = model.model.unit_forwards()
 
-    batch_size, seq_len, hidden_size = inputs_embeds.shape
+    # try to clear up memory by only loading the necessary parts of the model
+    del model
+    th.cuda.empty_cache()
 
-    jacobian = th.empty(hidden_size, hidden_size, device=model.device)
-    output = th.empty(batch_size, seq_len, hidden_size, device=model.device)
+    batch_size, seq_len, hidden_size = inputs_embeds.shape
 
     def unit_jacobian_output_generator():
         for unit_idx, unit_forward in enumerate(unit_forwards):
-            output[attention_mask] = unit_forward(inputs_embeds[attention_mask])
-
             if unit_idx % 2 == 0:  # attention unit
+                output = unit_forward(
+                    hidden_states=inputs_embeds,
+                    position_embeddings=position_embeddings,
+                    attention_mask=causal_mask,
+                    track_activations=False,
+                )
+                jacobian = th.empty(hidden_size, hidden_size, device=inputs_embeds.device)
+
                 def jacobian_output_generator():
                     for batch_idx, seq_idx in attention_mask.nonzero():
-                        for i in range(hidden_size):
+                        for i in tqdm(range(hidden_size), desc=f"Computing jacobian for unit {unit_idx}", leave=False, total=hidden_size):
+                            grad_mask = th.zeros_like(output)
+                            grad_mask[batch_idx, seq_idx, i] = 1
+
                             jacobian[i] = th.autograd.grad(
-                                output[batch_idx, seq_idx, i],
-                                inputs_embeds[batch_idx, seq_idx],
-                                grad_outputs=th.ones_like(output[batch_idx, seq_idx, i]),
+                                output,
+                                inputs_embeds,
+                                grad_outputs=grad_mask,
                                 retain_graph=True,
                                 create_graph=True,
-                            )[0]
+                                allow_unused=True,
+                            )[0][batch_idx, seq_idx]
 
                         yield batch_idx, seq_idx, jacobian, output[batch_idx, seq_idx]
             else:  # mlp unit
+                output = unit_forward(
+                    hidden_states=inputs_embeds,
+                    track_activations=False,
+                )
+
                 def jacobian_output_generator():
                     for batch_idx, seq_idx in attention_mask.nonzero():
-                        jacobian.copy_(
-                            th.autograd.functional.jacobian(
-                                unit_forward,
-                                inputs_embeds[batch_idx, seq_idx],
-                            )
+                        jacobian = th.autograd.functional.jacobian(
+                            unit_forward,
+                            inputs_embeds[batch_idx, seq_idx],
                         )
 
                         yield batch_idx, seq_idx, jacobian, output[batch_idx, seq_idx]
 
-            yield unit_idx, jacobian_output_generator()
+            yield jacobian_output_generator()
 
     return unit_jacobian_output_generator(), inputs_embeds
 
@@ -125,6 +148,7 @@ def compute_nth_order_deltas(
 
     inputs = tokenizer(dataset, return_tensors="pt", padding=True, truncation=True, max_length=max_token_length)
     inputs["attention_mask"] = inputs["attention_mask"].bool()  # why tf is this an int64
+    inputs["input_ids"] = inputs["input_ids"].to(model.device)
 
     labels = th.full_like(inputs["input_ids"], -100)
     labels[inputs["attention_mask"]] = inputs["input_ids"][inputs["attention_mask"]]
@@ -150,7 +174,7 @@ def compute_nth_order_deltas(
     jacobians_and_outputs, base = compute_unit_jacobians_and_outputs(model, inputs)
     final_residual = model(
         **inputs,
-        activation_mask=["model_activations.layer_activations.*.output"],
+        activation_mask=["model_activations.layer_activations.63.output"],
     ).model_activations.layer_activations[-1].output
 
     zeroth_order_delta, units_deltas = empty_nth_order_deltas_recursive(delta=base, num_units=num_units, max_depth=stop_n)

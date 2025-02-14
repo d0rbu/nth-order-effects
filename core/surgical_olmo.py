@@ -40,7 +40,7 @@ class ActivationMaskMixin:
 
         return mask_subset
 
-    def apply_activation_mask(self, mask: bool | list[str]) -> None:
+    def apply_activation_mask(self, mask: bool | list[str], called_recursively: bool = False) -> None:
         if mask is True:
             return
 
@@ -69,10 +69,12 @@ class ActivationMaskMixin:
                 else:
                     new_mask = self.get_mask_subset(mask, element_path)
 
-                element.apply_activation_mask(new_mask)
+                element.apply_activation_mask(new_mask, called_recursively=True)
 
             for element_path, element in leaf_elements:
-                if isinstance(mask, bool):
+                if element_path[-1] in ("output", "loss") and not called_recursively:
+                    mask_value = True
+                elif isinstance(mask, bool):
                     mask_value = mask
                 else:
                     new_mask = self.get_mask_subset(mask, element_path)
@@ -181,7 +183,7 @@ class SurgicalOlmo2Attention(Olmo2Attention):
         track_activations: bool = True,
         **kwargs,
     ) -> SurgicalOlmo2AttentionActivations | th.FloatTensor:
-        if track_activations:
+        if track_activations and activation_mask:
             return self.forward_track_activation(
                 hidden_states,
                 position_embeddings,
@@ -295,7 +297,7 @@ class SurgicalOlmo2Attention(Olmo2Attention):
             else:
                 attention_interface = ALL_ATTENTION_FUNCTIONS[self.config._attn_implementation]
 
-        output, _ = attention_interface(
+        output = attention_interface(
             self,
             query_states,
             key_states,
@@ -304,7 +306,7 @@ class SurgicalOlmo2Attention(Olmo2Attention):
             dropout=0.0 if not self.training else self.attention_dropout,
             scaling=self.scaling,
             **kwargs,
-        ).reshape(*input_shape, -1).contiguous()
+        )[0].reshape(*input_shape, -1).contiguous()
 
         output = self.o_proj(output)
 
@@ -375,12 +377,6 @@ class SurgicalOlmo2DecoderLayer(Olmo2DecoderLayer):
         self.mlp = SurgicalOlmo2MLP(config)
         self.post_feedforward_layernorm = SurgicalOlmo2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
-    REQUIRED_ACTIVATION_MASK = [
-        "output",
-        "attention_activations.output",
-        "mlp_activations.output",
-    ]
-
     def attn_unit_forward(
         self,
         hidden_states: th.FloatTensor,
@@ -413,7 +409,7 @@ class SurgicalOlmo2DecoderLayer(Olmo2DecoderLayer):
         track_activations: bool = True,
         **kwargs,
     ) -> SurgicalOlmo2DecoderLayerActivations | th.FloatTensor:
-        if track_activations:
+        if track_activations and activation_mask:
             return self.forward_track_activation(
                 hidden_states,
                 attention_mask,
@@ -437,24 +433,34 @@ class SurgicalOlmo2DecoderLayer(Olmo2DecoderLayer):
         activation_mask: bool | list[str] = ["output"],
     ) -> SurgicalOlmo2DecoderLayerActivations:
         # we need these activations in order to do inference
-        activation_mask_with_required_fields = add_activation_masks(activation_mask, self.REQUIRED_ACTIVATION_MASK)
-
         residual = hidden_states
+        activation_mask_for_attention = [".".join(activation_path.split(".")[1:]) for activation_path in activation_mask if activation_path.startswith("attention_activations.")]
 
-        attention_activations = self.self_attn(
+        attention_output = self.self_attn(
             hidden_states=residual,
             position_embeddings=position_embeddings,
             attention_mask=attention_mask,
-            activation_mask=activation_mask_with_required_fields,
+            activation_mask=activation_mask_for_attention,
         )
+        if isinstance(attention_output, SurgicalOlmo2AttentionActivations):
+            attention_activations = attention_output
+        else:
+            attention_activations = SurgicalOlmo2AttentionActivations(output=attention_output)
+
         attention_normed_output = self.post_attention_layernorm(attention_activations.output)
 
         residual += attention_normed_output
+        activation_mask_for_mlp = [".".join(activation_path.split(".")[1:]) for activation_path in activation_mask if activation_path.startswith("mlp_activations.")]
 
-        mlp_activations = self.mlp(
+        mlp_output = self.mlp(
             residual,
-            activation_mask=activation_mask_with_required_fields,
+            activation_mask=activation_mask_for_mlp,
         )
+        if isinstance(mlp_output, SurgicalOlmo2MLPActivations):
+            mlp_activations = mlp_output
+        else:
+            mlp_activations = SurgicalOlmo2MLPActivations(output=mlp_output)
+
         mlp_normed_output = self.post_feedforward_layernorm(mlp_activations.output)
 
         residual += mlp_normed_output
@@ -519,13 +525,6 @@ class SurgicalOlmo2Model(SurgicalOlmo2PreTrainedModel, Olmo2Model):
         # flatten
         return list(itertools.chain(*attn_and_mlp_forwards))
 
-    REQUIRED_ACTIVATION_MASK = [
-        "output",
-        "layer_activations.*.output",
-        "layer_activations.*.attention_activations.output",
-        "layer_activations.*.mlp_activations.output",
-    ]
-
     def forward(
         self,
         input_ids: th.LongTensor | None = None,
@@ -534,7 +533,7 @@ class SurgicalOlmo2Model(SurgicalOlmo2PreTrainedModel, Olmo2Model):
         track_activations: bool = True,
         **kwargs,
     ) -> SurgicalOlmo2ModelActivations | th.FloatTensor:
-        if track_activations:
+        if track_activations and activation_mask:
             return self.forward_track_activation(
                 input_ids=input_ids,
                 inputs_embeds=inputs_embeds,
@@ -558,14 +557,6 @@ class SurgicalOlmo2Model(SurgicalOlmo2PreTrainedModel, Olmo2Model):
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
 
-        # we need these activations in order to do inference
-        activation_mask_with_required_fields = add_activation_masks(activation_mask, self.REQUIRED_ACTIVATION_MASK)
-
-        if activation_mask is True:
-            activation_mask_with_required_fields = True
-        elif isinstance(activation_mask, list):
-            activation_mask_with_required_fields.extend(activation_mask)
-
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
 
@@ -584,22 +575,32 @@ class SurgicalOlmo2Model(SurgicalOlmo2PreTrainedModel, Olmo2Model):
         layer_activations = []
 
         # decoder layers
-        for decoder_layer in self.layers[: self.config.num_hidden_layers]:
+        for layer_idx, decoder_layer in enumerate(self.layers[: self.config.num_hidden_layers]):
+            activation_mask_for_layer = [
+                ".".join(activation_path.split(".")[2:]) for activation_path in activation_mask
+                if activation_path.startswith(f"model_activations.layer_activations.{layer_idx}.") or activation_path.startswith("model_activations.layer_activations.*.")
+            ]
+
             if self.gradient_checkpointing and self.training:
-                layer_activation = self._gradient_checkpointing_func(
+                layer_output = self._gradient_checkpointing_func(
                     decoder_layer.__call__,
                     hidden_states,
                     attention_mask=causal_mask,
                     position_embeddings=position_embeddings,
-                    activation_mask=activation_mask_with_required_fields,
+                    activation_mask=activation_mask_for_layer,
                 )
             else:
-                layer_activation = decoder_layer(
+                layer_output = decoder_layer(
                     hidden_states,
                     attention_mask=causal_mask,
                     position_embeddings=position_embeddings,
-                    activation_mask=activation_mask_with_required_fields
+                    activation_mask=activation_mask_for_layer,
                 )
+
+            if isinstance(layer_output, SurgicalOlmo2DecoderLayerActivations):
+                layer_activation = layer_output
+            else:
+                layer_activation = SurgicalOlmo2DecoderLayerActivations(output=layer_output)
 
             layer_activations.append(layer_activation)
             hidden_states = layer_activation.output
@@ -668,13 +669,32 @@ class SurgicalOlmo2ForCausalLM(SurgicalOlmo2PreTrainedModel, Olmo2ForCausalLM):
 
         self.post_init()
 
-    REQUIRED_ACTIVATION_MASK = [
-        "output",
-        "model_activations.output",
-        "model_activations.layer_activations.*.output",
-        "model_activations.layer_activations.*.attention_activations.output",
-        "model_activations.layer_activations.*.mlp_activations.output",
-    ]
+    @classmethod
+    def from_olmo2_for_causal_lm(cls, model: Olmo2ForCausalLM) -> "SurgicalOlmo2ForCausalLM":
+        with th.device("meta"):
+            surgical_model = cls(model.config)
+
+        surgical_model.lm_head = model.lm_head
+        surgical_model.model.rotary_emb = model.model.rotary_emb
+        surgical_model.model.norm = model.model.norm
+        for surgical_layer, model_layer in zip(surgical_model.model.layers, model.model.layers):
+            surgical_layer.post_feedforward_layernorm = model_layer.post_feedforward_layernorm
+
+            surgical_layer.mlp.down_proj = model_layer.mlp.down_proj
+            surgical_layer.mlp.up_proj = model_layer.mlp.up_proj
+            surgical_layer.mlp.gate_proj = model_layer.mlp.gate_proj
+
+            surgical_layer.post_attention_layernorm = model_layer.post_attention_layernorm
+
+            surgical_layer.self_attn.k_norm = model_layer.self_attn.k_norm
+            surgical_layer.self_attn.q_norm = model_layer.self_attn.q_norm
+            surgical_layer.self_attn.o_proj = model_layer.self_attn.o_proj
+            surgical_layer.self_attn.v_proj = model_layer.self_attn.v_proj
+            surgical_layer.self_attn.k_proj = model_layer.self_attn.k_proj
+            surgical_layer.self_attn.q_proj = model_layer.self_attn.q_proj
+        surgical_model.model.embed_tokens = model.model.embed_tokens
+
+        return surgical_model
 
     def forward(
         self,
@@ -685,7 +705,7 @@ class SurgicalOlmo2ForCausalLM(SurgicalOlmo2PreTrainedModel, Olmo2ForCausalLM):
         track_activations: bool = True,
         **kwargs,
     ) -> SurgicalOlmo2ForCausalLMActivations | th.FloatTensor:
-        if track_activations:
+        if track_activations and activation_mask:
             return self.forward_track_activation(
                 input_ids=input_ids,
                 inputs_embeds=inputs_embeds,
@@ -699,7 +719,7 @@ class SurgicalOlmo2ForCausalLM(SurgicalOlmo2PreTrainedModel, Olmo2ForCausalLM):
                 inputs_embeds=inputs_embeds,
                 labels=labels,
                 **kwargs,
-    )
+            )
 
     def forward_track_activation(
         self,
@@ -709,21 +729,20 @@ class SurgicalOlmo2ForCausalLM(SurgicalOlmo2PreTrainedModel, Olmo2ForCausalLM):
         activation_mask: bool | list[str] = ["logits", "loss"],
         **kwargs,
     ) -> SurgicalOlmo2ForCausalLMActivations:
-        # we need these activations in order to do inference
-        activation_mask_with_required_fields = add_activation_masks(activation_mask, self.REQUIRED_ACTIVATION_MASK)
-
-        if activation_mask is True:
-            activation_mask_with_required_fields = True
-        elif isinstance(activation_mask, list):
-            activation_mask_with_required_fields.extend(activation_mask)
+        activation_mask_for_model = [".".join(activation_path.split(".")[1:]) for activation_path in activation_mask if activation_path.startswith("model_activations.")]
 
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
-        model_activations = self.model(
+        model_output = self.model(
             input_ids=input_ids,
             inputs_embeds=inputs_embeds,
-            activation_mask=activation_mask_with_required_fields,
+            activation_mask=activation_mask_for_model,
             **kwargs,
         )
+
+        if isinstance(model_output, SurgicalOlmo2ModelActivations):
+            model_activations = model_output
+        else:
+            model_activations = SurgicalOlmo2ModelActivations(output=model_output)
 
         logits = self.lm_head(model_activations.output)
         loss = self.loss_function(logits=logits, labels=labels, vocab_size=self.config.vocab_size, **kwargs) if labels is not None else None

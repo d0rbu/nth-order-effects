@@ -9,6 +9,16 @@
             "type": "debugpy",
             "request": "launch",
             "module": "exp.additive_contributions",
-        }
+        },
+        {
+            "name": "4bit main exp",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "exp.additive_contributions",
+            "args": [
+                "--load-in-4bit",
+                "true"
+            ],
+        },
     ]
 }
