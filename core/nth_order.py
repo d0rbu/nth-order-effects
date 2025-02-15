@@ -1,12 +1,13 @@
-from itertools import product, combinations
-from heapq import heapify, heappop, heappush
+from functools import partial
 from dataclasses import dataclass, field
 from typing import Iterable
-from tqdm import tqdm
+import datetime
 
 import torch as th
 from datasets import Dataset, load_dataset
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
+from tqdm import tqdm
+from cachier import cachier
 
 from core.surgical_olmo import SurgicalOlmo2ForCausalLM
 
@@ -71,6 +72,7 @@ def compute_unit_jacobians_and_outputs(model: SurgicalOlmo2ForCausalLM, inputs: 
     )
 
     unit_forwards = model.model.unit_forwards()
+    unit_forwards = [partial(unit_forward, track_activations=False) for unit_forward in unit_forwards]
 
     # try to clear up memory by only loading the necessary parts of the model
     del model
@@ -85,13 +87,12 @@ def compute_unit_jacobians_and_outputs(model: SurgicalOlmo2ForCausalLM, inputs: 
                     hidden_states=inputs_embeds,
                     position_embeddings=position_embeddings,
                     attention_mask=causal_mask,
-                    track_activations=False,
                 )
-                jacobian = th.empty(hidden_size, hidden_size, device=inputs_embeds.device)
+                jacobian = th.empty(hidden_size, hidden_size, device=inputs_embeds.device, dtype=inputs_embeds.dtype)
 
                 def jacobian_output_generator():
                     for batch_idx, seq_idx in attention_mask.nonzero():
-                        for i in tqdm(range(hidden_size), desc=f"Computing jacobian for unit {unit_idx}", leave=False, total=hidden_size):
+                        for i in tqdm(range(hidden_size), desc=f"Computing jacobian for unit {unit_idx} batch {batch_idx} seq {seq_idx}", leave=False, total=hidden_size):
                             grad_mask = th.zeros_like(output)
                             grad_mask[batch_idx, seq_idx, i] = 1
 
@@ -100,15 +101,12 @@ def compute_unit_jacobians_and_outputs(model: SurgicalOlmo2ForCausalLM, inputs: 
                                 inputs_embeds,
                                 grad_outputs=grad_mask,
                                 retain_graph=True,
-                                create_graph=True,
-                                allow_unused=True,
                             )[0][batch_idx, seq_idx]
 
                         yield batch_idx, seq_idx, jacobian, output[batch_idx, seq_idx]
             else:  # mlp unit
                 output = unit_forward(
                     hidden_states=inputs_embeds,
-                    track_activations=False,
                 )
 
                 def jacobian_output_generator():
@@ -124,6 +122,7 @@ def compute_unit_jacobians_and_outputs(model: SurgicalOlmo2ForCausalLM, inputs: 
 
     return unit_jacobian_output_generator(), inputs_embeds
 
+@cachier(stale_after=datetime.timedelta(days=999))
 def compute_nth_order_deltas(
     model: SurgicalOlmo2ForCausalLM,
     tokenizer: PreTrainedTokenizerBase,
@@ -172,10 +171,11 @@ def compute_nth_order_deltas(
     total_iterations = num_units * inputs["attention_mask"].sum().item()
 
     jacobians_and_outputs, base = compute_unit_jacobians_and_outputs(model, inputs)
-    final_residual = model(
-        **inputs,
-        activation_mask=["model_activations.layer_activations.63.output"],
-    ).model_activations.layer_activations[-1].output
+    with th.no_grad():
+        final_residual = model(
+            **inputs,
+            activation_mask=["model_activations.layer_activations.63.output"],
+        ).model_activations.layer_activations[-1].output
 
     zeroth_order_delta, units_deltas = empty_nth_order_deltas_recursive(delta=base, num_units=num_units, max_depth=stop_n)
 
@@ -191,9 +191,9 @@ def compute_nth_order_deltas(
                     else:
                         # because we go through this in order of units, the parent is guaranteed to be computed
                         # since the parent's unit_idx < current unit_idx
-                        unit_delta.deltas[batch_idx, seq_idx] = jacobian @ unit_delta.parent.delta[batch_idx, seq_idx]
+                        unit_delta.delta[batch_idx, seq_idx] = jacobian @ unit_delta.parent.delta[batch_idx, seq_idx]
 
-                    progress_bar.update(1)
+                progress_bar.update(1)
 
     return zeroth_order_delta, final_residual, inputs
 

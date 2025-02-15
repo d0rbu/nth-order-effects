@@ -20,5 +20,21 @@
                 "true"
             ],
         },
+        {
+            "name": "4bit main exp small",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "exp.additive_contributions",
+            "args": [
+                "--dataset-name",
+                "redpajama-1",
+                "--load-in-4bit",
+                "true",
+                "--maxlen",
+                "128",
+                "--n",
+                "3",
+            ],
+        },
     ]
 }

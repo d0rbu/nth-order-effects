@@ -578,7 +578,7 @@ class SurgicalOlmo2Model(SurgicalOlmo2PreTrainedModel, Olmo2Model):
         for layer_idx, decoder_layer in enumerate(self.layers[: self.config.num_hidden_layers]):
             activation_mask_for_layer = [
                 ".".join(activation_path.split(".")[2:]) for activation_path in activation_mask
-                if activation_path.startswith(f"model_activations.layer_activations.{layer_idx}.") or activation_path.startswith("model_activations.layer_activations.*.")
+                if activation_path.startswith(f"layer_activations.{layer_idx}.") or activation_path.startswith("layer_activations.*.")
             ]
 
             if self.gradient_checkpointing and self.training:
@@ -599,11 +599,13 @@ class SurgicalOlmo2Model(SurgicalOlmo2PreTrainedModel, Olmo2Model):
 
             if isinstance(layer_output, SurgicalOlmo2DecoderLayerActivations):
                 layer_activation = layer_output
+                layer_output = layer_activation.output
             else:
-                layer_activation = SurgicalOlmo2DecoderLayerActivations(output=layer_output)
+                layer_activation = SurgicalOlmo2DecoderLayerActivations()
 
             layer_activations.append(layer_activation)
-            hidden_states = layer_activation.output
+
+            hidden_states = layer_output
 
         hidden_states = self.norm(hidden_states)
 
