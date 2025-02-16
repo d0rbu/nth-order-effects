@@ -1,7 +1,8 @@
 from functools import partial
 from dataclasses import dataclass, field
 from typing import Iterable
-import datetime
+import json
+import hashlib
 
 import torch as th
 from datasets import Dataset, load_dataset
@@ -129,7 +130,26 @@ def compute_unit_jacobians_and_outputs(model: SurgicalOlmo2ForCausalLM, inputs: 
 
     return unit_jacobian_output_generator(), inputs_embeds
 
-@cachier(stale_after=datetime.timedelta(days=999))
+def cache_hash(
+    args: tuple[SurgicalOlmo2ForCausalLM, PreTrainedTokenizerBase, list[str], int, int],
+    kwargs: dict[str, int],
+) -> str:
+    model = args[0] if len(args) > 0 else kwargs.get("model")
+    tokenizer = args[1] if len(args) > 1 else kwargs.get("tokenizer")
+    dataset = args[2] if len(args) > 2 else kwargs.get("dataset")
+    stop_n = args[3] if len(args) > 3 else kwargs.get("stop_n")
+    max_token_length = args[4] if len(args) > 4 else kwargs.get("max_token_length")
+
+    model_tokenizer_str = json.dumps(model.config.to_diff_dict(), sort_keys=True)
+    dataset_str = "_".join(dataset)
+    stop_n_str = str(stop_n)
+    max_token_length_str = str(max_token_length)
+
+    hashes = [hashlib.sha256(arg.encode()).hexdigest() for arg in [model_tokenizer_str, dataset_str, stop_n_str, max_token_length_str]]
+
+    return "_".join(hashes)
+
+@cachier(cache_dir=".nth_order_delta_cache", hash_func=cache_hash)
 def compute_nth_order_deltas(
     model: SurgicalOlmo2ForCausalLM,
     tokenizer: PreTrainedTokenizerBase,
