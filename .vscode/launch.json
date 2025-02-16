@@ -8,13 +8,13 @@
             "name": "main exp",
             "type": "debugpy",
             "request": "launch",
-            "module": "exp.additive_contributions",
+            "module": "exp.single_add_contributions",
         },
         {
             "name": "4bit main exp",
             "type": "debugpy",
             "request": "launch",
-            "module": "exp.additive_contributions",
+            "module": "exp.single_add_contributions",
             "args": [
                 "--load-in-4bit",
                 "true"
@@ -24,7 +24,7 @@
             "name": "4bit main exp small",
             "type": "debugpy",
             "request": "launch",
-            "module": "exp.additive_contributions",
+            "module": "exp.single_add_contributions",
             "args": [
                 "--dataset-name",
                 "redpajama-1",

@@ -76,7 +76,6 @@ def compute_unit_jacobians_and_outputs(model: SurgicalOlmo2ForCausalLM, inputs: 
 
     # try to clear up memory by only loading the necessary parts of the model
     del model
-    th.cuda.empty_cache()
 
     batch_size, seq_len, hidden_size = inputs_embeds.shape
 
@@ -91,6 +90,7 @@ def compute_unit_jacobians_and_outputs(model: SurgicalOlmo2ForCausalLM, inputs: 
                 jacobian = th.empty(hidden_size, hidden_size, device=inputs_embeds.device, dtype=inputs_embeds.dtype)
 
                 def jacobian_output_generator():
+                    nonlocal output
                     for batch_idx, seq_idx in attention_mask.nonzero():
                         for i in tqdm(range(hidden_size), desc=f"Computing jacobian for unit {unit_idx} batch {batch_idx} seq {seq_idx}", leave=False, total=hidden_size):
                             grad_mask = th.zeros_like(output)
@@ -104,12 +104,16 @@ def compute_unit_jacobians_and_outputs(model: SurgicalOlmo2ForCausalLM, inputs: 
                             )[0][batch_idx, seq_idx]
 
                         yield batch_idx, seq_idx, jacobian, output[batch_idx, seq_idx]
+
+                    del output
+
             else:  # mlp unit
                 output = unit_forward(
                     hidden_states=inputs_embeds,
                 )
 
                 def jacobian_output_generator():
+                    nonlocal output
                     for batch_idx, seq_idx in attention_mask.nonzero():
                         jacobian = th.autograd.functional.jacobian(
                             unit_forward,
@@ -117,6 +121,9 @@ def compute_unit_jacobians_and_outputs(model: SurgicalOlmo2ForCausalLM, inputs: 
                         )
 
                         yield batch_idx, seq_idx, jacobian, output[batch_idx, seq_idx]
+                        del jacobian
+
+                    del output
 
             yield jacobian_output_generator()
 
@@ -182,18 +189,22 @@ def compute_nth_order_deltas(
     with tqdm(total=total_iterations, desc="Computing nth order deltas") as progress_bar:
         for unit_deltas, jacobian_output_generator in zip(units_deltas, jacobians_and_outputs):
             for batch_idx, seq_idx, jacobian, output in jacobian_output_generator:
-                for unit_delta in unit_deltas:
-                    if unit_delta.delta is None:
-                        unit_delta.delta = th.empty_like(base)
+                with th.no_grad():
+                    for unit_delta in unit_deltas:
+                        if unit_delta.delta is None:
+                            unit_delta.delta = th.empty_like(base, device=th.device("cpu"))
 
-                    if unit_delta.parent is zeroth_order_delta:
-                        unit_delta.delta[batch_idx, seq_idx] = output
-                    else:
-                        # because we go through this in order of units, the parent is guaranteed to be computed
-                        # since the parent's unit_idx < current unit_idx
-                        unit_delta.delta[batch_idx, seq_idx] = jacobian @ unit_delta.parent.delta[batch_idx, seq_idx]
+                        if unit_delta.parent is zeroth_order_delta:
+                            unit_delta.delta[batch_idx, seq_idx] = output.to(th.device("cpu"))
+                        else:
+                            # because we go through this in order of units, the parent is guaranteed to be computed
+                            # since the parent's unit_idx < current unit_idx
+                            unit_delta.delta[batch_idx, seq_idx] = (jacobian @ unit_delta.parent.delta[batch_idx, seq_idx].to(jacobian.device)).to(th.device("cpu"))
 
-                progress_bar.update(1)
+                    del jacobian, output
+                    th.cuda.empty_cache()
+
+                    progress_bar.update(1)
 
     return zeroth_order_delta, final_residual, inputs
 
