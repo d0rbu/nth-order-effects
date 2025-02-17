@@ -21,7 +21,7 @@ DATASETS = {
         selection=chain(*[range(source_idx * 64, source_idx * 64 + 2) for source_idx in range(7)])
     ),
     "redpajama-1": DatasetConfig(
-        selection=range(1)
+        selection=[139]  # https://www.sensory.com/category/security/biometrics-security/
     ),
 }
 
