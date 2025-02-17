@@ -48,7 +48,7 @@ class NthOrderDelta:
         else:
             self.children[absolute_idx][rest] = value
 
-    def unit_indices(self) -> list[int]:
+    def unit_indices(self) -> tuple[int]:
         current_node = self
         indices = []
 
@@ -56,7 +56,7 @@ class NthOrderDelta:
             indices = [current_node.unit_idx] + indices
             current_node = current_node.parent
 
-        return indices[1:]
+        return tuple(indices[1:])
 
 def compute_unit_jacobians_and_outputs(model: SurgicalOlmo2ForCausalLM, inputs: dict) -> tuple[Iterable[Iterable[tuple[int, int, th.Tensor, th.Tensor]]], th.Tensor]:
     input_embeddings = model.get_input_embeddings()
@@ -156,7 +156,7 @@ def compute_nth_order_deltas(
     dataset: list[str],
     stop_n: int = 2,
     max_token_length: int = 512,
-) -> tuple[NthOrderDelta, th.Tensor, dict]:
+) -> tuple[NthOrderDelta, list[list[NthOrderDelta]], list[list[NthOrderDelta]], th.Tensor, dict]:
     """Compute up to the max_nth order deltas for the given model and dataset.
 
     Args:
@@ -167,8 +167,10 @@ def compute_nth_order_deltas(
 
     Returns:
         NthOrderDelta: The tree of nth order deltas for the given model and dataset.
-        th.Tensor: The final hidden state of the model before the final norm and output layer.
-        dict: The inputs to the model.
+        list[list[NthOrderDelta]]: The nth order deltas in a list ordered by depth.
+        list[list[NthOrderDelta]]: The nth order deltas in a list ordered by the last unit index.
+        th.Tensor: The final residual of the model.
+        dict: The inputs used to compute the nth order deltas.
     """
     assert stop_n > 0, "stop_n must be greater than 0"
 
@@ -204,7 +206,8 @@ def compute_nth_order_deltas(
             activation_mask=["model_activations.layer_activations.63.output"],
         ).model_activations.layer_activations[-1].output
 
-    zeroth_order_delta, units_deltas = empty_nth_order_deltas_recursive(delta=base, num_units=num_units, max_depth=stop_n)
+    # zeroth_order_delta is the root node, depth_deltas is the deltas in a list ordered by depth, and units_deltas is the deltas in a list ordered by the last unit index
+    zeroth_order_delta, depth_deltas, units_deltas = empty_nth_order_deltas_recursive(delta=base, num_units=num_units, max_depth=stop_n)
 
     with tqdm(total=total_iterations, desc="Computing nth order deltas") as progress_bar:
         for unit_deltas, jacobian_output_generator in zip(units_deltas, jacobians_and_outputs):
@@ -226,7 +229,7 @@ def compute_nth_order_deltas(
 
                     progress_bar.update(1)
 
-    return zeroth_order_delta, final_residual, inputs
+    return zeroth_order_delta, depth_deltas, units_deltas, final_residual, inputs
 
 
 # hehe dfs
@@ -235,15 +238,17 @@ def empty_nth_order_deltas_recursive(
     depth: int = 0,
     unit_idx: int = -1,
     num_units: int = 64,
+    depth_deltas: list[list[NthOrderDelta]] | None = None,
     unit_deltas: list[list[NthOrderDelta]] | None = None,
     max_depth: int = 1,
-) -> tuple[NthOrderDelta, list[list[NthOrderDelta]]]:
+) -> tuple[NthOrderDelta, list[list[NthOrderDelta]], list[list[NthOrderDelta]]]:
     if depth == 0:
         assert delta is not None, "base must be provided if depth is 0"
         assert unit_deltas is None, "unit_deltas must be None if depth is 0"
         assert unit_idx == -1, "unit_idx must be -1 if depth is 0"
 
         nth_order_delta = NthOrderDelta(unit_idx=-1, delta=delta)
+        depth_deltas = [[nth_order_delta]] + [[] for _ in range(max_depth)]
         unit_deltas = [[] for _ in range(num_units)]
         delta = None
     else:
@@ -252,13 +257,14 @@ def empty_nth_order_deltas_recursive(
         assert unit_idx > -1, "unit_idx must be non-negative if depth is not 0"
 
         nth_order_delta = NthOrderDelta(unit_idx=unit_idx)
+        depth_deltas[depth].append(nth_order_delta)
         unit_deltas[unit_idx].append(nth_order_delta)
 
     if depth >= max_depth:
-        return nth_order_delta, unit_deltas
+        return nth_order_delta, depth_deltas, unit_deltas
 
     for new_unit_idx in range(unit_idx + 1, num_units):
-        new_nth_order_delta, _ = empty_nth_order_deltas_recursive(
+        new_nth_order_delta, _, _ = empty_nth_order_deltas_recursive(
             delta=delta,
             depth=depth + 1,
             unit_idx=new_unit_idx,
@@ -269,4 +275,4 @@ def empty_nth_order_deltas_recursive(
         new_nth_order_delta.parent = nth_order_delta
         nth_order_delta.children.append(new_nth_order_delta)
 
-    return nth_order_delta, unit_deltas
+    return nth_order_delta, depth_deltas, unit_deltas
