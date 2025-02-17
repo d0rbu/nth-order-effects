@@ -3,7 +3,7 @@ from functools import partial
 from typing import Callable
 import gc
 import os
-import json
+import yaml
 
 import arguably
 import torch as th
@@ -70,7 +70,7 @@ def main(
     out_filename = __file__.split("/")[-1].replace(".py", ".json")
     os.makedirs(out_dir, exist_ok=True)
     with open(f"{out_dir}/{out_filename}", "w") as f:
-        json.dump(final_data, f)
+        f.write(yaml.dump(final_data, f))
 
     plt.bar(range(len(sorted_delta_losses)), [x.loss for x in sorted_delta_losses], tick_label=[str(x.unit_indices) for x in sorted_delta_losses])
 

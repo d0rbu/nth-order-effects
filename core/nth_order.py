@@ -269,6 +269,7 @@ def empty_nth_order_deltas_recursive(
             depth=depth + 1,
             unit_idx=new_unit_idx,
             num_units=num_units,
+            depth_deltas=depth_deltas,
             unit_deltas=unit_deltas,
             max_depth=max_depth,
         )
