@@ -1,7 +1,9 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from functools import partial
 from typing import Callable
 import gc
+import os
+import json
 
 import arguably
 import torch as th
@@ -35,6 +37,7 @@ def main(
     load_in_8bit: bool = False,
     load_in_4bit: bool = False,
     n: int = 2,
+    out_dir: str = "out",
 ) -> None:
     dataset = get_dataset(dataset_name)
     model_kwargs = {
@@ -61,8 +64,14 @@ def main(
     gc.collect()
 
     sorted_delta_losses = sorted(delta_losses, key=lambda x: x.loss)
+    final_data = [asdict(x) for x in sorted_delta_losses]
 
-    plt.bar(range(len(sorted_delta_losses)), [x.loss for x in sorted_delta_losses], tick_label=[x.nth_order_delta.unit_indices() for x in sorted_delta_losses])
+    out_filename = __file__.split("/")[-1].replace(".py", ".json")
+    os.makedirs(out_dir, exist_ok=True)
+    with open(f"{out_dir}/{out_filename}", "w") as f:
+        json.dump(final_data, f)
+
+    plt.bar(range(len(sorted_delta_losses)), [x.loss for x in sorted_delta_losses], tick_label=[str(x.unit_indices) for x in sorted_delta_losses])
 
 def compute_losses(
     depth_deltas: list[list[NthOrderDelta]],
