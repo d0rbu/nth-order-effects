@@ -67,12 +67,14 @@ def main(
     sorted_delta_losses = sorted(delta_losses, key=lambda x: x.loss)
     final_data = [asdict(x) for x in sorted_delta_losses]
 
-    out_filename = __file__.split("/")[-1].replace(".py", ".json")
+    out_filename = __file__.split("/")[-1].replace(".py", ".yaml")
     os.makedirs(out_dir, exist_ok=True)
     with open(f"{out_dir}/{out_filename}", "w") as f:
-        f.write(yaml.dump(final_data, f))
+        yaml.dump(final_data, f)
 
     plt.bar(range(len(sorted_delta_losses)), [x.loss for x in sorted_delta_losses], tick_label=[str(x.unit_indices) for x in sorted_delta_losses])
+
+    input("done :) press enter to close the plot")
 
 def compute_losses(
     base: th.Tensor,

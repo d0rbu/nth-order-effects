@@ -48,7 +48,7 @@ class NthOrderDelta:
         else:
             self.children[absolute_idx][rest] = value
 
-    def unit_indices(self) -> tuple[int]:
+    def unit_indices(self) -> list[int]:
         current_node = self
         indices = []
 
@@ -56,7 +56,7 @@ class NthOrderDelta:
             indices = [current_node.unit_idx] + indices
             current_node = current_node.parent
 
-        return tuple(indices[1:])
+        return indices[1:]
 
 def compute_unit_jacobians_and_outputs(model: SurgicalOlmo2ForCausalLM, inputs: dict) -> tuple[Iterable[Iterable[tuple[int, int, th.Tensor, th.Tensor]]], th.Tensor]:
     input_embeddings = model.get_input_embeddings()
@@ -203,7 +203,7 @@ def compute_nth_order_deltas(
     with th.no_grad():
         final_residual = model(
             **inputs,
-            activation_mask=["model_activations.layer_activations.63.output"],
+            activation_mask=["model_activations.layer_activations.31.output"],
         ).model_activations.layer_activations[-1].output
 
     # zeroth_order_delta is the root node, depth_deltas is the deltas in a list ordered by depth, and units_deltas is the deltas in a list ordered by the last unit index

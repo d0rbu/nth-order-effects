@@ -57,7 +57,7 @@ def main(
     output_module = nn.Sequential(output_norm, lm_head)
 
     with th.no_grad():
-        delta_losses = compute_losses(depth_deltas, loss_fn, output_module)
+        delta_losses = compute_losses(final_state, deltas, loss_fn, output_module)
 
     del dataset, model_kwargs, model, tokenizer, deltas, depth_deltas, units_deltas, final_state, inputs, loss_fn, output_norm, lm_head, output_module
     th.cuda.empty_cache()
@@ -76,28 +76,16 @@ def main(
     input("done :) press enter to close the plot")
 
 def compute_losses(
-    depth_deltas: list[list[NthOrderDelta]],
+    final_state: th.Tensor,
+    root: NthOrderDelta,
     loss_fn: Callable[[th.Tensor], th.Tensor],
     output_module: nn.Module,
 ) -> list[DeltaLoss]:
-    current_base = th.zeros_like(depth_deltas[0][0].delta, device=output_module[0].weight.device)
-    current_base_loss = loss_fn(output_module(current_base)).item()
-    running_base = current_base.clone()
-    losses = []
+    delta_loss = loss_fn(output_module(final_state - root.delta.to(final_state.device))).item()
 
-    for num_units, deltas in enumerate(depth_deltas):
-        for delta in deltas:
-            delta_value = delta.delta.to(output_module[0].weight.device)
-
-            running_base += delta_value
-            pyramidal_value = current_base + delta_value
-
-            loss = loss_fn(output_module(pyramidal_value)).item()
-            delta_loss = loss - current_base_loss
-            losses.append(DeltaLoss(delta.unit_indices(), delta_loss))
-
-        current_base[:] = running_base
-        current_base_loss = loss_fn(output_module(current_base)).item()
+    losses = [DeltaLoss(root.unit_indices(), delta_loss)]
+    for child in root.children:
+        losses.extend(compute_losses(final_state, child, loss_fn, output_module))
 
     return losses
 
