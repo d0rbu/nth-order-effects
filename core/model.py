@@ -11,6 +11,9 @@ from core.surgical_olmo import SurgicalOlmo2ForCausalLM
 from core.surgical_gpt_neox import SurgicalGPTNeoXForCausalLM
 
 
+SurgicalModel = SurgicalOlmo2ForCausalLM | SurgicalGPTNeoXForCausalLM
+
+
 @dataclass
 class Checkpoint:
     step: int

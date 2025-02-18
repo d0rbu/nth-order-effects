@@ -387,6 +387,10 @@ class SurgicalGPTNeoXModel(SurgicalGPTNeoXPreTrainedModel, GPTNeoXModel):
         self.post_init()
 
     def unit_forwards(self) -> list[Callable]:
+        if self.config.use_parallel_residual:
+            # eugh
+            return [lambda x: layer.attn_unit_forward(x) + layer.mlp_unit_forward(x) for layer in self.layers]
+
         attn_and_mlp_forwards = [(layer.attn_unit_forward, layer.mlp_unit_forward) for layer in self.layers]
         # flatten
         return list(itertools.chain(*attn_and_mlp_forwards))
@@ -545,20 +549,17 @@ class SurgicalGPTNeoXForCausalLM(SurgicalGPTNeoXPreTrainedModel, GPTNeoXForCausa
         surgical_model.model.rotary_emb = model.gpt_neox.rotary_emb
         surgical_model.model.norm = model.gpt_neox.final_layer_norm
         for surgical_layer, model_layer in zip(surgical_model.model.layers, model.gpt_neox.layers):
-            surgical_layer.post_feedforward_layernorm = model_layer.post_feedforward_layernorm
+            surgical_layer.mlp.dense_4h_to_h = model_layer.mlp.dense_4h_to_h
+            surgical_layer.mlp.dense_h_to_4h = model_layer.mlp.dense_h_to_4h
 
-            surgical_layer.mlp.down_proj = model_layer.mlp.down_proj
-            surgical_layer.mlp.up_proj = model_layer.mlp.up_proj
-            surgical_layer.mlp.gate_proj = model_layer.mlp.gate_proj
+            surgical_layer.attention.dense = model_layer.attention.dense
+            surgical_layer.attention.query_key_value = model_layer.attention.query_key_value
 
+            surgical_layer.post_mlp_dropout = model_layer.post_mlp_dropout
+            surgical_layer.post_attention_dropout = model_layer.post_attention_dropout
             surgical_layer.post_attention_layernorm = model_layer.post_attention_layernorm
-
-            surgical_layer.self_attn.k_norm = model_layer.self_attn.k_norm
-            surgical_layer.self_attn.q_norm = model_layer.self_attn.q_norm
-            surgical_layer.self_attn.o_proj = model_layer.self_attn.o_proj
-            surgical_layer.self_attn.v_proj = model_layer.self_attn.v_proj
-            surgical_layer.self_attn.k_proj = model_layer.self_attn.k_proj
-            surgical_layer.self_attn.q_proj = model_layer.self_attn.q_proj
+            surgical_layer.input_layernorm = model_layer.input_layernorm
+            surgical_layer.use_parallel_residual = model_layer.use_parallel_residual
         surgical_model.model.emb_dropout = model.gpt_neox.emb_dropout
         surgical_model.model.embed_in = model.gpt_neox.embed_in
 

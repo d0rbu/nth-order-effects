@@ -10,7 +10,7 @@ from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 from tqdm import tqdm
 from cachier import cachier
 
-from core.surgical_olmo import SurgicalOlmo2ForCausalLM
+from core.surgical_olmo import SurgicalModel
 
 
 @dataclass(order=True)
@@ -58,7 +58,7 @@ class NthOrderDelta:
 
         return indices[1:]
 
-def compute_unit_jacobians_and_outputs(model: SurgicalOlmo2ForCausalLM, inputs: dict) -> tuple[Iterable[Iterable[tuple[int, int, th.Tensor, th.Tensor]]], th.Tensor]:
+def compute_unit_jacobians_and_outputs(model: SurgicalModel, inputs: dict) -> tuple[Iterable[Iterable[tuple[int, int, th.Tensor, th.Tensor]]], th.Tensor]:
     input_embeddings = model.get_input_embeddings()
     inputs_embeds = input_embeddings(inputs["input_ids"].to(model.device)).detach()
     inputs_embeds.requires_grad = True
@@ -131,7 +131,7 @@ def compute_unit_jacobians_and_outputs(model: SurgicalOlmo2ForCausalLM, inputs: 
     return unit_jacobian_output_generator(), inputs_embeds
 
 def cache_hash(
-    args: tuple[SurgicalOlmo2ForCausalLM, PreTrainedTokenizerBase, list[str], int, int],
+    args: tuple[SurgicalModel, PreTrainedTokenizerBase, list[str], int, int],
     kwargs: dict[str, int],
 ) -> str:
     model = args[0] if len(args) > 0 else kwargs.get("model")
@@ -151,7 +151,7 @@ def cache_hash(
 
 @cachier(cache_dir=".nth_order_delta_cache", hash_func=cache_hash)
 def compute_nth_order_deltas(
-    model: SurgicalOlmo2ForCausalLM,
+    model: SurgicalModel,
     tokenizer: PreTrainedTokenizerBase,
     dataset: list[str],
     stop_n: int = 2,
@@ -160,7 +160,7 @@ def compute_nth_order_deltas(
     """Compute up to the max_nth order deltas for the given model and dataset.
 
     Args:
-        model (SurgicalOlmo2ForCausalLM): The model to compute the nth order deltas for.
+        model (SurgicalModel): The model to compute the nth order deltas for.
         tokenizer (PreTrainedTokenizerBase): The tokenizer to use for encoding the dataset.
         dataset (Dataset): The dataset to compute the nth order deltas for.
         stop_n (int): The maximum order of the deltas to compute. This is exclusive, from 0 to stop_n - 1.
