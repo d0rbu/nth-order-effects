@@ -11,13 +11,13 @@ import torch as th
 import torch.nn as nn
 
 from core.data import get_dataset
-from core.model import get_model_and_tokenizer, MODELS
+from core.model import get_model_and_tokenizer
 from core.nth_order import compute_nth_order_deltas, NthOrderDelta
 
 
 @dataclass
 class DeltaLoss:
-    unit_indices: tuple[int]
+    unit_indices: list[int]
     subtractive_loss: float
 
 DTYPE_MAP = {
@@ -29,7 +29,6 @@ DATA_FILE = "data.yaml"
 METADATA_FILE = "metadata.yaml"
 OUT_SUBDIR = __file__.split("/")[-1].replace(".py", "")
 
-@arguably.command
 def main(
     *args,
     model_name: str = "olmo2",
@@ -40,7 +39,7 @@ def main(
     dtype: str = "bf16",
     load_in_8bit: bool = False,
     load_in_4bit: bool = False,
-    n: int = 2,
+    n: int = 3,
     out_dir: str = "out",
 ) -> None:
     dataset = get_dataset(dataset_name)
@@ -84,9 +83,17 @@ def main(
         checkpoint = model_config.checkpoints[checkpoint_idx] if checkpoint_idx is not None else None
 
         metadata = {
+            "model": model_name,
             "dataset": dataset_name,
             "checkpoint_idx": checkpoint_idx,
-            "checkpoint_metadata": asdict(checkpoint) if checkpoint is not None else None,
+            "checkpoint_metadata": {
+                "step": checkpoint.step,
+                "num_tokens": checkpoint.num_tokens,
+                "model_config": {
+                    "hf_name": checkpoint.model_config.hf_name,
+                    "surgical_class": checkpoint.model_config.surgical_class.__name__,
+                }
+            } if checkpoint is not None else None,
             "maxlen": maxlen,
             "device": device,
             "dtype": dtype,
@@ -114,4 +121,6 @@ def compute_losses(
 
 
 if __name__ == "__main__":
+    command = arguably.command(main)
+
     arguably.run()

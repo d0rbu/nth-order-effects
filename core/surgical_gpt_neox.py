@@ -134,10 +134,10 @@ class SurgicalGPTNeoXAttention(GPTNeoXAttention):
         **kwargs,
     ) -> th.FloatTensor:
         input_shape = hidden_states.shape[:-1]
-        hidden_shape = (*input_shape, -1, self.head_dim)
+        hidden_shape = (*input_shape, -1, self.head_size)
 
         qkv = self.query_key_value(hidden_states).view(hidden_shape).transpose(1, 2)
-        query_states, key_states, value_states = qkv.chunk(3, dim=-1)
+        query_states, key_states, value_states = qkv.chunk(3, dim=1)
 
         cos, sin = position_embeddings
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
@@ -371,10 +371,7 @@ class SurgicalGPTNeoXModel(SurgicalGPTNeoXPreTrainedModel, GPTNeoXModel):
         SurgicalGPTNeoXPreTrainedModel.__init__(self, config)
         self.config = config
 
-        self.padding_idx = config.pad_token_id
-        self.vocab_size = config.vocab_size
-
-        self.embed_in = nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=self.padding_idx)
+        self.embed_in = nn.Embedding(config.vocab_size, config.hidden_size)
         self.emb_dropout = nn.Dropout(config.hidden_dropout)
         self.layers = nn.ModuleList(
             [SurgicalGPTNeoXLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
@@ -389,7 +386,16 @@ class SurgicalGPTNeoXModel(SurgicalGPTNeoXPreTrainedModel, GPTNeoXModel):
     def unit_forwards(self) -> list[Callable]:
         if self.config.use_parallel_residual:
             # eugh
-            return [lambda x: layer.attn_unit_forward(x) + layer.mlp_unit_forward(x) for layer in self.layers]
+            return [
+                lambda hidden_states, position_embeddings, attention_mask, track_activations: layer.attn_unit_forward(
+                    hidden_states=hidden_states,
+                    position_embeddings=position_embeddings,
+                    attention_mask=attention_mask,
+                    track_activations=track_activations,
+                ) + layer.mlp_unit_forward(
+                    hidden_states,
+                    track_activations=track_activations,
+                ) for layer in self.layers]
 
         attn_and_mlp_forwards = [(layer.attn_unit_forward, layer.mlp_unit_forward) for layer in self.layers]
         # flatten
@@ -536,9 +542,12 @@ class SurgicalGPTNeoXForCausalLM(SurgicalGPTNeoXPreTrainedModel, GPTNeoXForCausa
         SurgicalGPTNeoXPreTrainedModel.__init__(self, config)
 
         self.model = SurgicalGPTNeoXModel(config)
-        self.embed_out = nn.Linear(config.hidden_size, self.vocab_size, bias=False)
+        self.embed_out = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 
         self.post_init()
+
+    def get_input_embeddings(self) -> nn.Module:
+        return self.model.embed_in
 
     @classmethod
     def from_causal_lm(cls, model: GPTNeoXForCausalLM) -> "SurgicalGPTNeoXForCausalLM":

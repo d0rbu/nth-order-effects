@@ -11,7 +11,7 @@ from exp.contributions import main as subtract_contributions_main
 from exp.contributions import DATA_FILE, METADATA_FILE, OUT_SUBDIR
 
 
-@dataclass
+@dataclass(frozen=True)
 class ExperimentConfig:
     model_name: str
     dataset_name: str
@@ -24,7 +24,7 @@ class ExperimentConfig:
     n: int
 
 @arguably.command
-def main(
+def sweep(
     *args,
     model_name: str = "olmo2",
     dataset_name: str = "redpajama-1",
@@ -60,7 +60,8 @@ def main(
 
             completed_experiments.add(
                 ExperimentConfig(
-                    dataset_name=metadata["dataset_name"],
+                    model_name=metadata["model"],
+                    dataset_name=metadata["dataset"],
                     checkpoint_idx=metadata["checkpoint_idx"],
                     maxlen=metadata["maxlen"],
                     device=metadata["device"],
@@ -82,6 +83,7 @@ def main(
 
         checkpoint_idx = checkpoint_indices.pop(0)
         experiment = ExperimentConfig(
+            model_name=model_name,
             dataset_name=dataset_name,
             checkpoint_idx=checkpoint_idx,
             maxlen=maxlen,

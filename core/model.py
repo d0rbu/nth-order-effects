@@ -4,8 +4,10 @@ from typing import Any
 
 from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
+from transformers.utils.logging import disable_progress_bar
 from huggingface_hub import list_repo_refs
 import torch as th
+from cachier import cachier
 
 from core.surgical_olmo import SurgicalOlmo2ForCausalLM
 from core.surgical_gpt_neox import SurgicalGPTNeoXForCausalLM
@@ -57,7 +59,7 @@ class ModelConfig:
 
             checkpoints.append(Checkpoint(int(step), int(num_tokens), self))
 
-        self.checkpoints = checkpoints
+        self.checkpoints = sorted(checkpoints, key=lambda x: x.step)
 
 MODELS = {
     "olmo2": ModelConfig(
@@ -128,7 +130,9 @@ MODELS = {
     ),
 }
 
+disable_progress_bar()
 
+@cachier(cache_dir=".model_tokenizer_cache")
 def get_model_and_tokenizer(model_name: str = "olmo2", checkpoint_idx: int | None = None, model_kwargs: dict[str, Any] = None) -> tuple[PreTrainedModel, PreTrainedTokenizerBase, ModelConfig]:
     assert (model_config := MODELS.get(model_name, None)), f"Model {model_name} not found in MODELS. Available models: {list(MODELS.keys())}"
 
@@ -136,10 +140,15 @@ def get_model_and_tokenizer(model_name: str = "olmo2", checkpoint_idx: int | Non
 
     if checkpoint_idx is None:
         model = AutoModelForCausalLM.from_pretrained(model_config.hf_name, **model_kwargs)
+        step = "latest"
     else:
-        model = model_config.checkpoints[checkpoint_idx].load_model(model_kwargs)
+        checkpoint = model_config.checkpoints[checkpoint_idx]
+        step = str(checkpoint.step)
+        model = checkpoint.load_model(model_kwargs)
 
     # clone the model to the surgical version by getting and setting the state dict
     surgical_model = model_config.surgical_class.from_causal_lm(model)
+
+    print(f"Loaded model {model_name} at step {step}")
 
     return surgical_model, tokenizer, model_config

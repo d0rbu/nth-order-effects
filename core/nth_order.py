@@ -10,7 +10,7 @@ from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 from tqdm import tqdm
 from cachier import cachier
 
-from core.surgical_olmo import SurgicalModel
+from core.model import SurgicalModel
 
 
 @dataclass(order=True)
@@ -76,13 +76,14 @@ def compute_unit_jacobians_and_outputs(model: SurgicalModel, inputs: dict) -> tu
     unit_forwards = [partial(unit_forward, track_activations=False) for unit_forward in unit_forwards]
 
     # try to clear up memory by only loading the necessary parts of the model
+    use_parallel_residual = model.config.use_parallel_residual
     del model
 
     batch_size, seq_len, hidden_size = inputs_embeds.shape
 
     def unit_jacobian_output_generator():
         for unit_idx, unit_forward in enumerate(unit_forwards):
-            if unit_idx % 2 == 0:  # attention unit
+            if unit_idx % 2 == 0 or use_parallel_residual:
                 output = unit_forward(
                     hidden_states=inputs_embeds,
                     position_embeddings=position_embeddings,
@@ -140,7 +141,7 @@ def cache_hash(
     stop_n = args[3] if len(args) > 3 else kwargs.get("stop_n")
     max_token_length = args[4] if len(args) > 4 else kwargs.get("max_token_length")
 
-    model_tokenizer_str = json.dumps(model.config.to_diff_dict(), sort_keys=True)
+    model_tokenizer_str = json.dumps(model.config.to_dict(), sort_keys=True)
     dataset_str = "_".join(dataset)
     stop_n_str = str(stop_n)
     max_token_length_str = str(max_token_length)
@@ -174,6 +175,10 @@ def compute_nth_order_deltas(
     """
     assert stop_n > 0, "stop_n must be greater than 0"
 
+    # make sure tokenizer has pad token
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
     inputs = tokenizer(dataset, return_tensors="pt", padding=True, truncation=True, max_length=max_token_length)
     inputs["attention_mask"] = inputs["attention_mask"].bool()  # why tf is this an int64
     inputs["input_ids"] = inputs["input_ids"].to(model.device)
@@ -197,13 +202,14 @@ def compute_nth_order_deltas(
     #    J_{i_n}(x)J_{i_{n-1}}(x)...J_{i_1}(x)f_{i_0}(x)
 
     num_units = len(model.model.unit_forwards())
+    num_layers = model.config.num_hidden_layers
     total_iterations = num_units * inputs["attention_mask"].sum().item()
 
     jacobians_and_outputs, base = compute_unit_jacobians_and_outputs(model, inputs)
     with th.no_grad():
         final_residual = model(
             **inputs,
-            activation_mask=["model_activations.layer_activations.31.output"],
+            activation_mask=[f"model_activations.layer_activations.{num_layers - 1}.output"],
         ).model_activations.layer_activations[-1].output
 
     # zeroth_order_delta is the root node, depth_deltas is the deltas in a list ordered by depth, and units_deltas is the deltas in a list ordered by the last unit index
