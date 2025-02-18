@@ -6,7 +6,7 @@ import yaml
 import arguably
 import torch as th
 
-from core.data import MODELS
+from core.model import MODELS
 from exp.contributions import main as subtract_contributions_main
 from exp.contributions import DATA_FILE, METADATA_FILE, OUT_SUBDIR
 

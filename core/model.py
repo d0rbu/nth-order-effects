@@ -8,7 +8,7 @@ from huggingface_hub import list_repo_refs
 import torch as th
 
 from core.surgical_olmo import SurgicalOlmo2ForCausalLM
-from core.surgical_pythia import SurgicalPythiaForCausalLM
+from core.surgical_gpt_neox import SurgicalGPTNeoXForCausalLM
 
 
 @dataclass
@@ -67,61 +67,61 @@ MODELS = {
         hf_name="EleutherAI/pythia-14m",
         branch_regex=re.compile(r"step(\d+)"),
         revision_format="step{}",
-        surgical_class=SurgicalPythiaForCausalLM,
+        surgical_class=SurgicalGPTNeoXForCausalLM,
     ),
     "pythia31m": ModelConfig(
         hf_name="EleutherAI/pythia-31m",
         branch_regex=re.compile(r"step(\d+)"),
         revision_format="step{}",
-        surgical_class=SurgicalPythiaForCausalLM,
+        surgical_class=SurgicalGPTNeoXForCausalLM,
     ),
     "pythia70m": ModelConfig(
         hf_name="EleutherAI/pythia-70m-deduped",
         branch_regex=re.compile(r"step(\d+)"),
         revision_format="step{}",
-        surgical_class=SurgicalPythiaForCausalLM,
+        surgical_class=SurgicalGPTNeoXForCausalLM,
     ),
     "pythia160m": ModelConfig(
         hf_name="EleutherAI/pythia-160m-deduped",
         branch_regex=re.compile(r"step(\d+)"),
         revision_format="step{}",
-        surgical_class=SurgicalPythiaForCausalLM,
+        surgical_class=SurgicalGPTNeoXForCausalLM,
     ),
     "pythia410m": ModelConfig(
         hf_name="EleutherAI/pythia-410m-deduped",
         branch_regex=re.compile(r"step(\d+)"),
         revision_format="step{}",
-        surgical_class=SurgicalPythiaForCausalLM,
+        surgical_class=SurgicalGPTNeoXForCausalLM,
     ),
     "pythia1b": ModelConfig(
         hf_name="EleutherAI/pythia-1b-deduped",
         branch_regex=re.compile(r"step(\d+)"),
         revision_format="step{}",
-        surgical_class=SurgicalPythiaForCausalLM,
+        surgical_class=SurgicalGPTNeoXForCausalLM,
     ),
     "pythia1.4b": ModelConfig(
         hf_name="EleutherAI/pythia-1.4b-deduped",
         branch_regex=re.compile(r"step(\d+)"),
         revision_format="step{}",
-        surgical_class=SurgicalPythiaForCausalLM,
+        surgical_class=SurgicalGPTNeoXForCausalLM,
     ),
     "pythia2.8b": ModelConfig(
         hf_name="EleutherAI/pythia-2.8b-deduped",
         branch_regex=re.compile(r"step(\d+)"),
         revision_format="step{}",
-        surgical_class=SurgicalPythiaForCausalLM,
+        surgical_class=SurgicalGPTNeoXForCausalLM,
     ),
     "pythia6.9b": ModelConfig(
         hf_name="EleutherAI/pythia-6.9b-deduped",
         branch_regex=re.compile(r"step(\d+)"),
         revision_format="step{}",
-        surgical_class=SurgicalPythiaForCausalLM,
+        surgical_class=SurgicalGPTNeoXForCausalLM,
     ),
     "pythia12b": ModelConfig(
         hf_name="EleutherAI/pythia-12b-deduped",
         branch_regex=re.compile(r"step(\d+)"),
         revision_format="step{}",
-        surgical_class=SurgicalPythiaForCausalLM,
+        surgical_class=SurgicalGPTNeoXForCausalLM,
     ),
 }
 

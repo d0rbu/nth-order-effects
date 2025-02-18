@@ -4,145 +4,29 @@ from typing import Callable
 
 import torch as th
 import torch.nn as nn
-from transformers.models.olmo2.modeling_olmo2 import (
-    Olmo2RMSNorm,
-    Olmo2Attention,
-    Olmo2MLP,
-    Olmo2DecoderLayer,
-    Olmo2RotaryEmbedding,
-    Olmo2PreTrainedModel,
-    Olmo2Model,
-    Olmo2ForCausalLM,
+from transformers.models.gpt_neox.modeling_gpt_neox import (
+    GPTNeoXAttention,
+    GPTNeoXMLP,
+    GPTNeoXLayer,
+    GPTNeoXRotaryEmbedding,
+    GPTNeoXPreTrainedModel,
+    GPTNeoXModel,
+    GPTNeoXForCausalLM,
     apply_rotary_pos_emb,
     eager_attention_forward,
     logger
 )
-from transformers.models.olmo2.configuration_olmo2 import Olmo2Config
+from transformers.models.gpt_neox.configuration_gpt_neox import GPTNeoXConfig
 from transformers.activations import ACT2FN
 from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
 
-
-class ActivationMaskMixin:
-    @staticmethod
-    def get_mask_subset(mask: list[str], prefix: list[str]) -> list[str]:
-        mask_subset = []  # subset of the mask which corresponds to this element, with the prefix removed
-
-        for mask_element in mask:
-            mask_element_path = mask_element.split(".")
-
-            for path_idx, (mask_part, prefix_part) in enumerate(zip(mask_element_path, prefix)):
-                if mask_part != "*" and mask_part != prefix_part:
-                    break
-            else:
-                mask_element_path_without_prefix = mask_element_path[path_idx + 1:]
-                mask_element_without_prefix = ".".join(mask_element_path_without_prefix)
-                mask_subset.append(mask_element_without_prefix)
-
-        return mask_subset
-
-    def apply_activation_mask(self, mask: bool | list[str], called_recursively: bool = False) -> None:
-        if mask is True:
-            return
-
-        for child in fields(self):
-            field_value = getattr(self, child.name, None)
-
-            if field_value is None:
-                continue
-
-            if isinstance(field_value, ActivationMaskMixin):
-                tree_elements = [((child.name,), field_value)]
-                leaf_elements = []
-            elif isinstance(field_value, list):
-                tree_elements = [((child.name, str(idx)), element) for idx, element in enumerate(field_value) if isinstance(element, ActivationMaskMixin)]
-                leaf_elements = [((child.name, str(idx)), element) for idx, element in enumerate(field_value) if not isinstance(element, ActivationMaskMixin)]
-            elif isinstance(field_value, dict):
-                tree_elements = [((child.name, str(element_key)), element_value) for element_key, element_value in field_value.items() if isinstance(element_value, ActivationMaskMixin)]
-                leaf_elements = [((child.name, str(element_key)), element_value) for element_key, element_value in field_value.items() if not isinstance(element_value, ActivationMaskMixin)]
-            else:
-                tree_elements = []
-                leaf_elements = [((child.name,), field_value)]
-
-            for element_path, element in tree_elements:
-                if isinstance(mask, bool):
-                    new_mask = mask
-                else:
-                    new_mask = self.get_mask_subset(mask, element_path)
-
-                element.apply_activation_mask(new_mask, called_recursively=True)
-
-            for element_path, element in leaf_elements:
-                if element_path[-1] in ("output", "loss") and not called_recursively:
-                    mask_value = True
-                elif isinstance(mask, bool):
-                    mask_value = mask
-                else:
-                    new_mask = self.get_mask_subset(mask, element_path)
-                    mask_value = len(new_mask) > 0
-
-                current_parent = self
-                current_element = element
-                
-                for element_part in element_path[1:]:
-                    current_parent = current_element
-                    current_element = current_parent[element_part]
-
-                if current_parent is self:
-                    setattr(current_parent, element_path[-1], current_element if mask_value else None)
-                else:
-                    current_parent[element_path[-1]] = current_element if mask_value else None
-
-def add_activation_masks(activation_mask_0: bool | list[str], activation_mask_1: bool | list[str]) -> bool | list[str]:
-    if activation_mask_0 is True or activation_mask_1 is True:
-        return True
-    elif activation_mask_0 is False and activation_mask_1 is False:
-        return False
-    else:
-        return list(set(activation_mask_0) | set(activation_mask_1))
-
-@dataclass
-class SurgicalOlmo2AttentionActivations(ActivationMaskMixin):
-    query_activation: th.FloatTensor | None = None
-    key_activation: th.FloatTensor | None = None
-    value_activation: th.FloatTensor | None = None
-    normed_query_activation: th.FloatTensor | None = None
-    normed_key_activation: th.FloatTensor | None = None
-    rotated_query_activation: th.FloatTensor | None = None
-    rotated_key_activation: th.FloatTensor | None = None
-    attention_map: th.FloatTensor | None = None
-    attention_output: th.FloatTensor | None = None
-    output: th.FloatTensor | None = None  # o_proj(attention_output)
-
-@dataclass
-class SurgicalOlmo2MLPActivations(ActivationMaskMixin):
-    gate_proj_activation: th.FloatTensor | None = None
-    gate_proj_nonlinear_activation: th.FloatTensor | None = None
-    up_proj_activation: th.FloatTensor | None = None
-    hidden_activation: th.FloatTensor | None = None
-    output: th.FloatTensor | None = None  # down_proj(hidden_activation)
-
-@dataclass
-class SurgicalOlmo2DecoderLayerActivations(ActivationMaskMixin):
-    attention_activations: SurgicalOlmo2AttentionActivations = field(default_factory=SurgicalOlmo2AttentionActivations)
-    attention_normed_output: th.FloatTensor | None = None  # norm(attention_activations.output)
-    mlp_activations: SurgicalOlmo2MLPActivations = field(default_factory=SurgicalOlmo2MLPActivations)
-    mlp_normed_output: th.FloatTensor | None = None  # norm(mlp_activations.output)
-    output: th.FloatTensor | None = None  # norm(mlp_activations.output)
-
-@dataclass
-class SurgicalOlmo2ModelActivations(ActivationMaskMixin):
-    residual_base: th.FloatTensor | None = None
-    layer_activations: list[SurgicalOlmo2DecoderLayerActivations] = field(default_factory=list)
-    output: th.FloatTensor | None = None  # norm(final residual state)
-
-@dataclass
-class SurgicalOlmo2ForCausalLMActivations(ActivationMaskMixin):
-    model_activations: SurgicalOlmo2ModelActivations = field(default_factory=SurgicalOlmo2ModelActivations)
-    logits: th.FloatTensor | None = None
-    loss: th.FloatTensor | None = None
-
-ActivationClass = SurgicalOlmo2AttentionActivations | SurgicalOlmo2MLPActivations | SurgicalOlmo2DecoderLayerActivations | SurgicalOlmo2ModelActivations | SurgicalOlmo2ForCausalLMActivations
-
+from core.activations import (
+    CausalLMActivations,
+    ModelActivations,
+    DecoderLayerActivations,
+    AttentionActivations,
+    MLPActivations,
+)
 
 class SurgicalOlmo2RMSNorm(Olmo2RMSNorm):
     pass
@@ -661,25 +545,24 @@ class SurgicalOlmo2Model(SurgicalOlmo2PreTrainedModel, Olmo2Model):
 
         return self.norm(hidden_states)
 
-class SurgicalOlmo2ForCausalLM(SurgicalOlmo2PreTrainedModel, Olmo2ForCausalLM):
-    def __init__(self, config: Olmo2Config):
-        SurgicalOlmo2PreTrainedModel.__init__(self, config)
+class SurgicalGPTNeoXForCausalLM(SurgicalGPTNeoXPreTrainedModel, GPTNeoXForCausalLM):
+    def __init__(self, config: GPTNeoXConfig):
+        SurgicalGPTNeoXPreTrainedModel.__init__(self, config)
 
-        self.model = SurgicalOlmo2Model(config)
-        self.vocab_size = config.vocab_size
-        self.lm_head = nn.Linear(config.hidden_size, self.vocab_size, bias=False)
+        self.model = SurgicalGPTNeoXModel(config)
+        self.embed_out = nn.Linear(config.hidden_size, self.vocab_size, bias=False)
 
         self.post_init()
 
     @classmethod
-    def from_causal_lm(cls, model: Olmo2ForCausalLM) -> "SurgicalOlmo2ForCausalLM":
+    def from_causal_lm(cls, model: GPTNeoXForCausalLM) -> "SurgicalGPTNeoXForCausalLM":
         with th.device("meta"):
             surgical_model = cls(model.config)
 
-        surgical_model.lm_head = model.lm_head
-        surgical_model.model.rotary_emb = model.model.rotary_emb
-        surgical_model.model.norm = model.model.norm
-        for surgical_layer, model_layer in zip(surgical_model.model.layers, model.model.layers):
+        surgical_model.embed_out = model.embed_out
+        surgical_model.model.rotary_emb = model.gpt_neox.rotary_emb
+        surgical_model.model.norm = model.gpt_neox.norm
+        for surgical_layer, model_layer in zip(surgical_model.model.layers, model.gpt_neox.layers):
             surgical_layer.post_feedforward_layernorm = model_layer.post_feedforward_layernorm
 
             surgical_layer.mlp.down_proj = model_layer.mlp.down_proj
@@ -694,7 +577,7 @@ class SurgicalOlmo2ForCausalLM(SurgicalOlmo2PreTrainedModel, Olmo2ForCausalLM):
             surgical_layer.self_attn.v_proj = model_layer.self_attn.v_proj
             surgical_layer.self_attn.k_proj = model_layer.self_attn.k_proj
             surgical_layer.self_attn.q_proj = model_layer.self_attn.q_proj
-        surgical_model.model.embed_tokens = model.model.embed_tokens
+        surgical_model.model.embed_tokens = model.gpt_neox.embed_tokens
 
         return surgical_model
 
@@ -706,7 +589,7 @@ class SurgicalOlmo2ForCausalLM(SurgicalOlmo2PreTrainedModel, Olmo2ForCausalLM):
         activation_mask: bool | list[str] = ["logits", "loss"],
         track_activations: bool = True,
         **kwargs,
-    ) -> SurgicalOlmo2ForCausalLMActivations | th.FloatTensor:
+    ) -> CausalLMActivations | th.FloatTensor:
         if track_activations and activation_mask:
             return self.forward_track_activation(
                 input_ids=input_ids,
@@ -730,7 +613,7 @@ class SurgicalOlmo2ForCausalLM(SurgicalOlmo2PreTrainedModel, Olmo2ForCausalLM):
         labels: th.LongTensor | None = None,
         activation_mask: bool | list[str] = ["logits", "loss"],
         **kwargs,
-    ) -> SurgicalOlmo2ForCausalLMActivations:
+    ) -> CausalLMActivations:
         activation_mask_for_model = [".".join(activation_path.split(".")[1:]) for activation_path in activation_mask if activation_path.startswith("model_activations.")]
 
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
@@ -741,15 +624,15 @@ class SurgicalOlmo2ForCausalLM(SurgicalOlmo2PreTrainedModel, Olmo2ForCausalLM):
             **kwargs,
         )
 
-        if isinstance(model_output, SurgicalOlmo2ModelActivations):
+        if isinstance(model_output, ModelActivations):
             model_activations = model_output
         else:
-            model_activations = SurgicalOlmo2ModelActivations(output=model_output)
+            model_activations = ModelActivations(output=model_output)
 
-        logits = self.lm_head(model_activations.output)
+        logits = self.embed_out(model_activations.output)
         loss = self.loss_function(logits=logits, labels=labels, vocab_size=self.config.vocab_size, **kwargs) if labels is not None else None
 
-        activations = SurgicalOlmo2ForCausalLMActivations(
+        activations = CausalLMActivations(
             logits=logits,
             model_activations=model_activations,
             loss=loss,
@@ -772,7 +655,7 @@ class SurgicalOlmo2ForCausalLM(SurgicalOlmo2PreTrainedModel, Olmo2ForCausalLM):
             **kwargs,
         )
 
-        logits = self.lm_head(model_output)
+        logits = self.embed_out(model_output)
         loss = self.loss_function(logits=logits, labels=labels, vocab_size=self.config.vocab_size, **kwargs) if labels is not None else None
 
         return loss
