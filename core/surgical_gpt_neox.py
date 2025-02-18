@@ -1,4 +1,3 @@
-from dataclasses import dataclass, fields, field
 import itertools
 from typing import Callable
 
@@ -28,35 +27,20 @@ from core.activations import (
     MLPActivations,
 )
 
-class SurgicalOlmo2RMSNorm(Olmo2RMSNorm):
-    pass
-
-class SurgicalOlmo2Attention(Olmo2Attention):
-    def __init__(self, config: Olmo2Config, layer_idx: int | None = None):
-        super(Olmo2Attention, self).__init__()
+class SurgicalGPTNeoXAttention(GPTNeoXAttention):
+    def __init__(self, config: GPTNeoXConfig, layer_idx: int | None = None):
+        super(GPTNeoXAttention, self).__init__()
 
         self.config = config
-        self.layer_idx = layer_idx
-        self.head_dim = getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)
-        self.num_key_value_groups = config.num_attention_heads // config.num_key_value_heads
-        self.scaling = self.head_dim**-0.5
+        self.head_size = config.hidden_size // config.num_attention_heads
         self.attention_dropout = config.attention_dropout
+        self.rotary_ndims = int(self.head_size * config.rotary_pct)
+        self.scaling = self.head_size**-0.5
         self.is_causal = True
+        self.layer_idx = layer_idx
 
-        self.q_proj = nn.Linear(
-            config.hidden_size, config.num_attention_heads * self.head_dim, bias=config.attention_bias
-        )
-        self.k_proj = nn.Linear(
-            config.hidden_size, config.num_key_value_heads * self.head_dim, bias=config.attention_bias
-        )
-        self.v_proj = nn.Linear(
-            config.hidden_size, config.num_key_value_heads * self.head_dim, bias=config.attention_bias
-        )
-        self.o_proj = nn.Linear(
-            config.num_attention_heads * self.head_dim, config.hidden_size, bias=config.attention_bias
-        )
-        self.q_norm = SurgicalOlmo2RMSNorm(config.num_attention_heads * self.head_dim, config.rms_norm_eps)
-        self.k_norm = SurgicalOlmo2RMSNorm(config.num_key_value_heads * self.head_dim, config.rms_norm_eps)
+        self.query_key_value = nn.Linear(config.hidden_size, 3 * config.hidden_size, bias=config.attention_bias)
+        self.dense = nn.Linear(config.hidden_size, config.hidden_size, bias=config.attention_bias)
 
     def forward(
         self,
@@ -66,7 +50,7 @@ class SurgicalOlmo2Attention(Olmo2Attention):
         activation_mask: bool | list[str] = ["output"],
         track_activations: bool = True,
         **kwargs,
-    ) -> SurgicalOlmo2AttentionActivations | th.FloatTensor:
+    ) -> AttentionActivations | th.FloatTensor:
         if track_activations and activation_mask:
             return self.forward_track_activation(
                 hidden_states,
@@ -90,32 +74,26 @@ class SurgicalOlmo2Attention(Olmo2Attention):
         attention_mask: th.BoolTensor | None = None,
         activation_mask: bool | list[str] = ["output"],
         **kwargs,
-    ) -> SurgicalOlmo2AttentionActivations:
+    ) -> AttentionActivations:
         input_shape = hidden_states.shape[:-1]
-        hidden_shape = (*input_shape, -1, self.head_dim)
+        hidden_shape = (*input_shape, -1, 3 * self.head_size)
 
-        query_states = self.q_proj(hidden_states)
-        key_states = self.k_proj(hidden_states)
-        value_states = self.v_proj(hidden_states)
-
-        normed_query_states = self.q_norm(query_states)
-        normed_key_states = self.k_norm(key_states)
-
-        query_states = query_states.view(hidden_shape).transpose(1, 2)
-        key_states = key_states.view(hidden_shape).transpose(1, 2)
-        value_states = value_states.view(hidden_shape).transpose(1, 2)
-        normed_query_states = normed_query_states.view(hidden_shape).transpose(1, 2)
-        normed_key_states = normed_key_states.view(hidden_shape).transpose(1, 2)
+        qkv = self.query_key_value(hidden_states).view(hidden_shape).transpose(1, 2)
+        query_states, key_states, value_states = qkv.chunk(3, dim=-1)
 
         cos, sin = position_embeddings
-        rotated_query_states, rotated_key_states = apply_rotary_pos_emb(normed_query_states, normed_key_states, cos, sin)
+        rotated_query_states, rotated_key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
         attention_interface: Callable = eager_attention_forward
         if self.config._attn_implementation != "eager":
-            if self.config._attn_implementation == "sdpa" and "attention_map" in activation_mask:
+            if self.config._attn_implementation in ("sdpa", "flash_attention_2") and "attention_map" in activation_mask:
                 logger.warning_once(
-                    "`torch.nn.functional.scaled_dot_product_attention` does not support `output_attentions=True`. Falling back to "
-                    'eager attention. This warning can be removed using the argument `attn_implementation="eager"` when loading the model.'
+                    f"Setting `attention_type` to `eager` because `{self.config._attn_implementation}` does not support"
+                    f" `output_attentions=True` or `head_mask`."
+                )
+            elif self.training and self.attention_dropout > 0 and self.config._attn_implementation == "flex_attention":
+                logger.warning_once(
+                    f"Setting `attention_type` to `eager` because `dropout` is not supported in `{self.config._attn_implementation}`."
                 )
             else:
                 attention_interface = ALL_ATTENTION_FUNCTIONS[self.config._attn_implementation]
@@ -132,14 +110,12 @@ class SurgicalOlmo2Attention(Olmo2Attention):
         )
 
         contiguous_attention_output = attention_output.reshape(*input_shape, -1).contiguous()
-        output = self.o_proj(contiguous_attention_output)
+        output = self.dense(contiguous_attention_output)
 
-        activations = SurgicalOlmo2AttentionActivations(
+        activations = AttentionActivations(
             query_activation=query_states,
             key_activation=key_states,
             value_activation=value_states,
-            normed_query_activation=normed_query_states,
-            normed_key_activation=normed_key_states,
             rotated_query_activation=rotated_query_states,
             rotated_key_activation=rotated_key_states,
             attention_map=attention_map,
@@ -160,23 +136,17 @@ class SurgicalOlmo2Attention(Olmo2Attention):
         input_shape = hidden_states.shape[:-1]
         hidden_shape = (*input_shape, -1, self.head_dim)
 
-        query_states = self.q_norm(self.q_proj(hidden_states))
-        key_states = self.k_norm(self.k_proj(hidden_states))
-        value_states = self.v_proj(hidden_states)
-
-        query_states = query_states.view(hidden_shape).transpose(1, 2)
-        key_states = key_states.view(hidden_shape).transpose(1, 2)
-        value_states = value_states.view(hidden_shape).transpose(1, 2)
+        qkv = self.query_key_value(hidden_states).view(hidden_shape).transpose(1, 2)
+        query_states, key_states, value_states = qkv.chunk(3, dim=-1)
 
         cos, sin = position_embeddings
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
         attention_interface: Callable = eager_attention_forward
         if self.config._attn_implementation != "eager":
-            if self.config._attn_implementation == "sdpa":
+            if self.training and self.attention_dropout > 0 and self.config._attn_implementation == "flex_attention":
                 logger.warning_once(
-                    "`torch.nn.functional.scaled_dot_product_attention` does not support `output_attentions=True`. Falling back to "
-                    'eager attention. This warning can be removed using the argument `attn_implementation="eager"` when loading the model.'
+                    f"Setting `attention_type` to `eager` because `dropout` is not supported in `{self.config._attn_implementation}`."
                 )
             else:
                 attention_interface = ALL_ATTENTION_FUNCTIONS[self.config._attn_implementation]
@@ -192,23 +162,17 @@ class SurgicalOlmo2Attention(Olmo2Attention):
             **kwargs,
         )[0].reshape(*input_shape, -1).contiguous()
 
-        output = self.o_proj(output)
+        output = self.dense(output)
 
         return output
 
-class SurgicalOlmo2MLP(Olmo2MLP):
-    def __init__(self, config: Olmo2Config):
-        super(Olmo2MLP, self).__init__()
+class SurgicalGPTNeoXMLP(GPTNeoXMLP):
+    def __init__(self, config: GPTNeoXConfig):
+        super(GPTNeoXMLP, self).__init__()
 
-        self.config = config
-        self.hidden_size = config.hidden_size
-        self.intermediate_size = config.intermediate_size
-
-        self.gate_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
-        self.up_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
-        self.down_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=False)
-
-        self.act_fn = ACT2FN[config.hidden_act]
+        self.dense_h_to_4h = nn.Linear(config.hidden_size, config.intermediate_size)
+        self.dense_4h_to_h = nn.Linear(config.intermediate_size, config.hidden_size)
+        self.act = ACT2FN[config.hidden_act]
 
     def forward(
         self,
@@ -216,7 +180,7 @@ class SurgicalOlmo2MLP(Olmo2MLP):
         activation_mask: bool | list[str] = ["output"],
         track_activations: bool = True,
         **kwargs,
-    ) -> SurgicalOlmo2MLPActivations | th.FloatTensor:
+    ) -> MLPActivations | th.FloatTensor:
         if track_activations:
             return self.forward_track_activation(hidden_states, activation_mask)
         else:
@@ -226,16 +190,12 @@ class SurgicalOlmo2MLP(Olmo2MLP):
         self,
         hidden_states: th.FloatTensor,
         activation_mask: bool | list[str] = ["output"],
-    ) -> SurgicalOlmo2MLPActivations:
-        gate_proj_activation = self.gate_proj(hidden_states)
-        gate_proj_nonlinear_activation = self.act_fn(gate_proj_activation)
-        up_proj_activation = self.up_proj(hidden_states)
-        hidden_activation = gate_proj_nonlinear_activation * up_proj_activation
-        output = self.down_proj(hidden_activation)
+    ) -> MLPActivations:
+        up_proj_activation = self.dense_h_to_4h(hidden_states)
+        hidden_activation = self.act(up_proj_activation)
+        output = self.dense_4h_to_h(hidden_activation)
 
-        activations = SurgicalOlmo2MLPActivations(
-            gate_proj_activation=gate_proj_activation,
-            gate_proj_nonlinear_activation=gate_proj_nonlinear_activation,
+        activations = MLPActivations(
             up_proj_activation=up_proj_activation,
             hidden_activation=hidden_activation,
             output=output,
@@ -248,18 +208,19 @@ class SurgicalOlmo2MLP(Olmo2MLP):
         self,
         hidden_states: th.FloatTensor,
     ) -> th.FloatTensor:
-        return self.down_proj(self.act_fn(self.gate_proj(hidden_states)) * self.up_proj(hidden_states))
+        return self.dense_4h_to_h(self.act(self.dense_h_to_4h(hidden_states)))
 
-class SurgicalOlmo2DecoderLayer(Olmo2DecoderLayer):
-    def __init__(self, config: Olmo2Config, layer_idx: int):
-        super(Olmo2DecoderLayer, self).__init__()
+class SurgicalGPTNeoXLayer(GPTNeoXLayer):
+    def __init__(self, config: GPTNeoXConfig, layer_idx: int):
+        super(GPTNeoXLayer, self).__init__()
 
-        self.hidden_size = config.hidden_size
-
-        self.self_attn = SurgicalOlmo2Attention(config=config, layer_idx=layer_idx)
-        self.post_attention_layernorm = SurgicalOlmo2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.mlp = SurgicalOlmo2MLP(config)
-        self.post_feedforward_layernorm = SurgicalOlmo2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.use_parallel_residual = config.use_parallel_residual
+        self.input_layernorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.post_attention_layernorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.post_attention_dropout = nn.Dropout(config.hidden_dropout)
+        self.post_mlp_dropout = nn.Dropout(config.hidden_dropout)
+        self.attention = SurgicalGPTNeoXAttention(config, layer_idx)
+        self.mlp = SurgicalGPTNeoXMLP(config)
 
     def attn_unit_forward(
         self,
@@ -268,13 +229,11 @@ class SurgicalOlmo2DecoderLayer(Olmo2DecoderLayer):
         position_embeddings: th.FloatTensor | None = None,
         **kwargs,
     ) -> th.FloatTensor:
-        return self.post_attention_layernorm(
-            self.self_attn(
-                hidden_states,
-                attention_mask=attention_mask,
-                position_embeddings=position_embeddings,
-                **kwargs,
-            )
+        return self.attention(
+            self.input_layernorm(hidden_states),
+            attention_mask=attention_mask,
+            position_embeddings=position_embeddings,
+            **kwargs,
         )
 
     def mlp_unit_forward(
@@ -282,7 +241,7 @@ class SurgicalOlmo2DecoderLayer(Olmo2DecoderLayer):
         hidden_states: th.FloatTensor,
         **kwargs,
     ) -> th.FloatTensor:
-        return self.post_feedforward_layernorm(self.mlp(hidden_states, **kwargs))
+        return self.mlp(self.post_attention_layernorm(hidden_states), **kwargs)
 
     def forward(
         self,
@@ -292,7 +251,7 @@ class SurgicalOlmo2DecoderLayer(Olmo2DecoderLayer):
         activation_mask: bool | list[str] = ["output"],
         track_activations: bool = True,
         **kwargs,
-    ) -> SurgicalOlmo2DecoderLayerActivations | th.FloatTensor:
+    ) -> DecoderLayerActivations | th.FloatTensor:
         if track_activations and activation_mask:
             return self.forward_track_activation(
                 hidden_states,
@@ -315,45 +274,52 @@ class SurgicalOlmo2DecoderLayer(Olmo2DecoderLayer):
         attention_mask: th.BoolTensor | None = None,
         position_embeddings: th.FloatTensor | None = None,
         activation_mask: bool | list[str] = ["output"],
-    ) -> SurgicalOlmo2DecoderLayerActivations:
-        # we need these activations in order to do inference
+    ) -> DecoderLayerActivations:
         residual = hidden_states
         activation_mask_for_attention = [".".join(activation_path.split(".")[1:]) for activation_path in activation_mask if activation_path.startswith("attention_activations.")]
 
-        attention_output = self.self_attn(
-            hidden_states=residual,
+        attention_normed_input = self.input_layernorm(residual)
+        attention_output = self.attention(
+            hidden_states=attention_normed_input,
             position_embeddings=position_embeddings,
             attention_mask=attention_mask,
             activation_mask=activation_mask_for_attention,
         )
-        if isinstance(attention_output, SurgicalOlmo2AttentionActivations):
+        if isinstance(attention_output, AttentionActivations):
             attention_activations = attention_output
         else:
-            attention_activations = SurgicalOlmo2AttentionActivations(output=attention_output)
+            attention_activations = AttentionActivations(output=attention_output)
 
-        attention_normed_output = self.post_attention_layernorm(attention_activations.output)
-
-        residual += attention_normed_output
+        attention_dropped_output = self.post_attention_dropout(attention_activations.output)
         activation_mask_for_mlp = [".".join(activation_path.split(".")[1:]) for activation_path in activation_mask if activation_path.startswith("mlp_activations.")]
 
+        if not self.use_parallel_residual:
+            residual += attention_dropped_output
+
+        mlp_normed_input = self.post_attention_layernorm(residual)
         mlp_output = self.mlp(
-            residual,
+            mlp_normed_input,
             activation_mask=activation_mask_for_mlp,
         )
-        if isinstance(mlp_output, SurgicalOlmo2MLPActivations):
+        if isinstance(mlp_output, MLPActivations):
             mlp_activations = mlp_output
         else:
-            mlp_activations = SurgicalOlmo2MLPActivations(output=mlp_output)
+            mlp_activations = MLPActivations(output=mlp_output)
 
-        mlp_normed_output = self.post_feedforward_layernorm(mlp_activations.output)
+        mlp_dropped_output = self.post_mlp_dropout(mlp_activations.output)
 
-        residual += mlp_normed_output
+        residual += mlp_dropped_output
 
-        activations = SurgicalOlmo2DecoderLayerActivations(
+        if self.use_parallel_residual:
+            residual += attention_dropped_output
+
+        activations = DecoderLayerActivations(
+            attention_normed_input=attention_normed_input,
             attention_activations=attention_activations,
-            attention_normed_output=attention_normed_output,
+            attention_dropped_output=attention_dropped_output,
+            mlp_normed_input=mlp_normed_input,
             mlp_activations=mlp_activations,
-            mlp_normed_output=mlp_normed_output,
+            mlp_dropped_output=mlp_dropped_output,
             output=residual,
         )
         activations.apply_activation_mask(activation_mask)
@@ -368,37 +334,53 @@ class SurgicalOlmo2DecoderLayer(Olmo2DecoderLayer):
     ) -> th.FloatTensor:
         residual = hidden_states
 
-        attention_output = self.self_attn(
-            hidden_states=residual,
-            position_embeddings=position_embeddings,
-            attention_mask=attention_mask,
-            track_activations=False,
+        attention_output = self.post_attention_dropout(
+            self.attention(
+                hidden_states=self.input_layernorm(residual),
+                position_embeddings=position_embeddings,
+                attention_mask=attention_mask,
+                track_activations=False,
+            )
         )
-        residual += self.post_attention_layernorm(attention_output)
 
-        residual += self.post_feedforward_layernorm(self.mlp(residual, track_activations=False))
+        if not self.use_parallel_residual:
+            residual += attention_output
+
+        mlp_output = self.post_mlp_dropout(
+            self.mlp(
+                self.post_attention_layernorm(residual),
+                track_activations=False,
+            )
+        )
+
+        residual += mlp_output
+
+        if self.use_parallel_residual:
+            residual += attention_output
 
         return residual
 
-class SurgicalOlmo2RotaryEmbedding(Olmo2RotaryEmbedding):
+class SurgicalGPTNeoXRotaryEmbedding(GPTNeoXRotaryEmbedding):
     pass
 
-class SurgicalOlmo2PreTrainedModel(Olmo2PreTrainedModel):
+class SurgicalGPTNeoXPreTrainedModel(GPTNeoXPreTrainedModel):
     pass
 
-class SurgicalOlmo2Model(SurgicalOlmo2PreTrainedModel, Olmo2Model):
-    def __init__(self, config: Olmo2Config):
-        SurgicalOlmo2PreTrainedModel.__init__(self, config)
+class SurgicalGPTNeoXModel(SurgicalGPTNeoXPreTrainedModel, GPTNeoXModel):
+    def __init__(self, config: GPTNeoXConfig):
+        SurgicalGPTNeoXPreTrainedModel.__init__(self, config)
+        self.config = config
 
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
 
-        self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
+        self.embed_in = nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=self.padding_idx)
+        self.emb_dropout = nn.Dropout(config.hidden_dropout)
         self.layers = nn.ModuleList(
-            [SurgicalOlmo2DecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
+            [SurgicalGPTNeoXLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
         )
-        self.norm = SurgicalOlmo2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.rotary_emb = SurgicalOlmo2RotaryEmbedding(config=config)
+        self.norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.rotary_emb = SurgicalGPTNeoXRotaryEmbedding(config)
         self.gradient_checkpointing = False
 
         # Initialize weights and apply final processing
@@ -416,7 +398,7 @@ class SurgicalOlmo2Model(SurgicalOlmo2PreTrainedModel, Olmo2Model):
         activation_mask: bool | list[str] = ["output"],
         track_activations: bool = True,
         **kwargs,
-    ) -> SurgicalOlmo2ModelActivations | th.FloatTensor:
+    ) -> ModelActivations | th.FloatTensor:
         if track_activations and activation_mask:
             return self.forward_track_activation(
                 input_ids=input_ids,
@@ -437,12 +419,12 @@ class SurgicalOlmo2Model(SurgicalOlmo2PreTrainedModel, Olmo2Model):
         inputs_embeds: th.FloatTensor | None = None,
         activation_mask: bool | list[str] = ["output"],
         **kwargs,
-    ) -> SurgicalOlmo2ModelActivations:
+    ) -> ModelActivations:
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
 
         if inputs_embeds is None:
-            inputs_embeds = self.embed_tokens(input_ids)
+            inputs_embeds = self.embed_in(input_ids)
 
         position_ids = th.arange(
             0, inputs_embeds.shape[1], device=inputs_embeds.device, dtype=th.long
@@ -481,11 +463,11 @@ class SurgicalOlmo2Model(SurgicalOlmo2PreTrainedModel, Olmo2Model):
                     activation_mask=activation_mask_for_layer,
                 )
 
-            if isinstance(layer_output, SurgicalOlmo2DecoderLayerActivations):
+            if isinstance(layer_output, DecoderLayerActivations):
                 layer_activation = layer_output
                 layer_output = layer_activation.output
             else:
-                layer_activation = SurgicalOlmo2DecoderLayerActivations()
+                layer_activation = DecoderLayerActivations()
 
             layer_activations.append(layer_activation)
 
@@ -493,7 +475,7 @@ class SurgicalOlmo2Model(SurgicalOlmo2PreTrainedModel, Olmo2Model):
 
         hidden_states = self.norm(hidden_states)
 
-        activations = SurgicalOlmo2ModelActivations(
+        activations = ModelActivations(
             residual_base=inputs_embeds,
             layer_activations=layer_activations,
             output=hidden_states,
@@ -512,7 +494,7 @@ class SurgicalOlmo2Model(SurgicalOlmo2PreTrainedModel, Olmo2Model):
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
 
         if inputs_embeds is None:
-            inputs_embeds = self.embed_tokens(input_ids)
+            inputs_embeds = self.embed_in(input_ids)
 
         position_ids = th.arange(
             0, inputs_embeds.shape[1], device=inputs_embeds.device, dtype=th.long
@@ -561,7 +543,7 @@ class SurgicalGPTNeoXForCausalLM(SurgicalGPTNeoXPreTrainedModel, GPTNeoXForCausa
 
         surgical_model.embed_out = model.embed_out
         surgical_model.model.rotary_emb = model.gpt_neox.rotary_emb
-        surgical_model.model.norm = model.gpt_neox.norm
+        surgical_model.model.norm = model.gpt_neox.final_layer_norm
         for surgical_layer, model_layer in zip(surgical_model.model.layers, model.gpt_neox.layers):
             surgical_layer.post_feedforward_layernorm = model_layer.post_feedforward_layernorm
 
@@ -577,7 +559,8 @@ class SurgicalGPTNeoXForCausalLM(SurgicalGPTNeoXPreTrainedModel, GPTNeoXForCausa
             surgical_layer.self_attn.v_proj = model_layer.self_attn.v_proj
             surgical_layer.self_attn.k_proj = model_layer.self_attn.k_proj
             surgical_layer.self_attn.q_proj = model_layer.self_attn.q_proj
-        surgical_model.model.embed_tokens = model.gpt_neox.embed_tokens
+        surgical_model.model.emb_dropout = model.gpt_neox.emb_dropout
+        surgical_model.model.embed_in = model.gpt_neox.embed_in
 
         return surgical_model
 

@@ -172,15 +172,7 @@ class SurgicalOlmo2Attention(Olmo2Attention):
         cos, sin = position_embeddings
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
-        attention_interface: Callable = eager_attention_forward
-        if self.config._attn_implementation != "eager":
-            if self.config._attn_implementation == "sdpa":
-                logger.warning_once(
-                    "`torch.nn.functional.scaled_dot_product_attention` does not support `output_attentions=True`. Falling back to "
-                    'eager attention. This warning can be removed using the argument `attn_implementation="eager"` when loading the model.'
-                )
-            else:
-                attention_interface = ALL_ATTENTION_FUNCTIONS[self.config._attn_implementation]
+        attention_interface = ALL_ATTENTION_FUNCTIONS[self.config._attn_implementation]
 
         output = attention_interface(
             self,
@@ -317,7 +309,6 @@ class SurgicalOlmo2DecoderLayer(Olmo2DecoderLayer):
         position_embeddings: th.FloatTensor | None = None,
         activation_mask: bool | list[str] = ["output"],
     ) -> DecoderLayerActivations:
-        # we need these activations in order to do inference
         residual = hidden_states
         activation_mask_for_attention = [".".join(activation_path.split(".")[1:]) for activation_path in activation_mask if activation_path.startswith("attention_activations.")]
 

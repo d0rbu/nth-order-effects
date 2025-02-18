@@ -104,9 +104,13 @@ class MLPActivations(ActivationMaskMixin):
 
 @dataclass
 class DecoderLayerActivations(ActivationMaskMixin):
+    attention_normed_input: th.FloatTensor | None = None  # norm(input)
     attention_activations: AttentionActivations = field(default_factory=AttentionActivations)
+    attention_dropped_output: th.FloatTensor | None = None  # dropped(attention_activations.output)
     attention_normed_output: th.FloatTensor | None = None  # norm(attention_activations.output)
+    mlp_normed_input: th.FloatTensor | None = None
     mlp_activations: MLPActivations = field(default_factory=MLPActivations)
+    mlp_dropped_output: th.FloatTensor | None = None  # dropped(mlp_activations.output)
     mlp_normed_output: th.FloatTensor | None = None  # norm(mlp_activations.output)
     output: th.FloatTensor | None = None  # norm(mlp_activations.output)
 
