@@ -134,10 +134,10 @@ class SurgicalGPTNeoXAttention(GPTNeoXAttention):
         **kwargs,
     ) -> th.FloatTensor:
         input_shape = hidden_states.shape[:-1]
-        hidden_shape = (*input_shape, -1, self.head_size)
+        hidden_shape = (*input_shape, -1, 3 * self.head_size)
 
         qkv = self.query_key_value(hidden_states).view(hidden_shape).transpose(1, 2)
-        query_states, key_states, value_states = qkv.chunk(3, dim=1)
+        query_states, key_states, value_states = qkv.chunk(3, dim=-1)
 
         cos, sin = position_embeddings
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
@@ -607,7 +607,10 @@ class SurgicalGPTNeoXForCausalLM(SurgicalGPTNeoXPreTrainedModel, GPTNeoXForCausa
         activation_mask: bool | list[str] = ["logits", "loss"],
         **kwargs,
     ) -> CausalLMActivations:
-        activation_mask_for_model = [".".join(activation_path.split(".")[1:]) for activation_path in activation_mask if activation_path.startswith("model_activations.")]
+        if isinstance(activation_mask, bool):
+            activation_mask_for_model = activation_mask
+        else:
+            activation_mask_for_model = [".".join(activation_path.split(".")[1:]) for activation_path in activation_mask if activation_path.startswith("model_activations.")]
 
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
         model_output = self.model(

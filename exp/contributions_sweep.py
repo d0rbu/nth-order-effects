@@ -24,6 +24,15 @@ def sweep(
 
     completed_experiments = set(get_exp_data(out_dir).keys())
 
+    print("Experiment config:")
+    print(f"    model_name: {model_name}")
+    print(f"    dataset_name: {dataset_name}")
+    print(f"    maxlen: {maxlen}")
+    print(f"    dtype: {dtype}")
+    print(f"    load_in_8bit: {load_in_8bit}")
+    print(f"    load_in_4bit: {load_in_4bit}")
+    print(f"    n: {n}")
+
     # fill in checkpoint_idx. so we start at 0, then max_checkpoint_idx, then max_checkpoint_idx // 2, then max_checkpoint_idx // 4, then 3 * max_checkpoint_idx // 4, etc.
     checkpoint_indices = [max_checkpoint_idx]
     num_divisions = 1
@@ -48,6 +57,8 @@ def sweep(
 
         if experiment in completed_experiments:
             continue
+
+        print(f"Running experiment with checkpoint_idx={checkpoint_idx}")
 
         subtract_contributions_main(
             model_name=model_name,

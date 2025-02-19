@@ -2,7 +2,17 @@ import os
 import yaml
 from dataclasses import dataclass
 
-from exp.contributions import DATA_FILE, METADATA_FILE, OUT_SUBDIR
+import torch as th
+
+
+DTYPE_MAP = {
+    "bf16": th.bfloat16,
+    "fp32": th.float32,
+    "fp16": th.float16,
+}
+DATA_FILE = "data.yaml"
+METADATA_FILE = "metadata.yaml"
+CONTRIBUTIONS_OUT_SUBDIR = "contributions"
 
 
 @dataclass(frozen=True)
@@ -21,7 +31,7 @@ class ExperimentConfig:
 def get_exp_data(
     out_dir: str = "out",
 ) -> dict[ExperimentConfig, str]:
-    exp_dir = os.path.join(out_dir, OUT_SUBDIR)
+    exp_dir = os.path.join(out_dir, CONTRIBUTIONS_OUT_SUBDIR)
     os.makedirs(exp_dir, exist_ok=True)
 
     completed_experiments: dict[ExperimentConfig, str] = {}

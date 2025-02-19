@@ -149,6 +149,4 @@ def get_model_and_tokenizer(model_name: str = "olmo2", checkpoint_idx: int | Non
     # clone the model to the surgical version by getting and setting the state dict
     surgical_model = model_config.surgical_class.from_causal_lm(model)
 
-    print(f"Loaded model {model_name} at step {step if step is not None else 'latest'}")
-
     return surgical_model, tokenizer, checkpoint

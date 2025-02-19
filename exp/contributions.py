@@ -13,21 +13,13 @@ import torch.nn as nn
 from core.data import get_dataset
 from core.model import get_model_and_tokenizer
 from core.nth_order import compute_nth_order_deltas, NthOrderDelta
+from exp.exp_data import DTYPE_MAP, DATA_FILE, METADATA_FILE, CONTRIBUTIONS_OUT_SUBDIR
 
 
 @dataclass
 class DeltaLoss:
     unit_indices: list[int]
     subtractive_loss: float
-
-DTYPE_MAP = {
-    "bf16": th.bfloat16,
-    "fp32": th.float32,
-    "fp16": th.float16,
-}
-DATA_FILE = "data.yaml"
-METADATA_FILE = "metadata.yaml"
-OUT_SUBDIR = __file__.split("/")[-1].replace(".py", "")
 
 def main(
     *args,
@@ -70,7 +62,7 @@ def main(
     final_data = [asdict(x) for x in sorted_delta_losses]
 
     out_timestamp_dir = str(int(time.time() * 1000))
-    final_out_dir = os.path.join(out_dir, OUT_SUBDIR, out_timestamp_dir)
+    final_out_dir = os.path.join(out_dir, CONTRIBUTIONS_OUT_SUBDIR, out_timestamp_dir)
 
     out_filepath = os.path.join(final_out_dir, DATA_FILE)
     metadata_out_filepath = os.path.join(final_out_dir, METADATA_FILE)
