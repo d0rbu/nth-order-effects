@@ -383,19 +383,39 @@ class SurgicalGPTNeoXModel(SurgicalGPTNeoXPreTrainedModel, GPTNeoXModel):
         # Initialize weights and apply final processing
         self.post_init()
 
+    def parallel_unit_forward(self, layer: SurgicalGPTNeoXLayer) -> Callable:
+        def unit_forward(
+            hidden_states: th.FloatTensor,
+            position_embeddings: th.FloatTensor,
+            attention_mask: th.BoolTensor | None,
+            track_activations: bool
+        ) -> DecoderLayerActivations | th.FloatTensor:
+            attn_activations = layer.attn_unit_forward(
+                hidden_states=hidden_states,
+                position_embeddings=position_embeddings,
+                attention_mask=attention_mask,
+                track_activations=track_activations,
+            )
+            mlp_activations = layer.mlp_unit_forward(
+                hidden_states,
+                track_activations=track_activations,
+            )
+
+            if not track_activations:
+                return attn_activations + mlp_activations
+            else:
+                return DecoderLayerActivations(
+                    attention_activations=attn_activations,
+                    mlp_activations=mlp_activations,
+                    output=attn_activations.output + mlp_activations.output,
+                )
+
+        return unit_forward
+
     def unit_forwards(self) -> list[Callable]:
         if self.config.use_parallel_residual:
             # eugh
-            return [
-                lambda hidden_states, position_embeddings, attention_mask, track_activations: layer.attn_unit_forward(
-                    hidden_states=hidden_states,
-                    position_embeddings=position_embeddings,
-                    attention_mask=attention_mask,
-                    track_activations=track_activations,
-                ) + layer.mlp_unit_forward(
-                    hidden_states,
-                    track_activations=track_activations,
-                ) for layer in self.layers]
+            return [self.parallel_unit_forward(layer) for layer in self.layers]
 
         attn_and_mlp_forwards = [(layer.attn_unit_forward, layer.mlp_unit_forward) for layer in self.layers]
         # flatten

@@ -21,7 +21,7 @@ def main(
     model_name: str = "pythia410m",
     dataset_name: str = "redpajama-1",
     maxlen: int = 256,
-    dtype: str = "bf16",
+    dtype: str = "fp16",
     load_in_8bit: bool = False,
     load_in_4bit: bool = False,
     n: int = 3,

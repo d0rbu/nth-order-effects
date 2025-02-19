@@ -12,14 +12,14 @@ from cachier import cachier
 from core.model import SurgicalModel, Checkpoint
 
 
-@dataclass(order=True)
+@dataclass
 class NthOrderDelta:
     unit_idx: int
-    delta: th.Tensor | None = field(default=None, compare=False)
-    parent: "NthOrderDelta | None" = field(default=None, compare=False)
-    children: list["NthOrderDelta"] = field(default_factory=list, compare=False)
+    delta: th.Tensor | None = None
+    parent: "NthOrderDelta | None" = None
+    children: list["NthOrderDelta"] = field(default_factory=list)
 
-    def __getitem__(self, indices) -> "NthOrderDelta":
+    def __getitem__(self, indices: tuple[int] | int) -> "NthOrderDelta":
         if not isinstance(indices, tuple):
             indices = (indices,)
 
@@ -33,7 +33,7 @@ class NthOrderDelta:
         else:
             return self.children[absolute_idx][rest]
 
-    def __setitem__(self, indices, value: "NthOrderDelta") -> None:
+    def __setitem__(self, indices: tuple[int] | int, value: "NthOrderDelta") -> None:
         if not isinstance(indices, tuple):
             indices = (indices,)
 
