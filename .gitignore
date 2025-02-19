@@ -174,4 +174,4 @@ cython_debug/
 .model_tokenizer_cache
 out
 
-*.png
+figures

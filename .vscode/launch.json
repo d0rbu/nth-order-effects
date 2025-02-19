@@ -28,14 +28,13 @@
             "module": "viz.order_distributions",
             "args": [
                 "--model-name",
-                "pythia410m",
+                "pythia14m",
                 "--dataset-name",
                 "redpajama-1",
-                "--load-in-4bit",
                 "--maxlen",
-                "256",
+                "2048",
                 "--n",
-                "3",
+                "6",
             ],
         },
         {

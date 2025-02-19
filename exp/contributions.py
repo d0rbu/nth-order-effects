@@ -44,6 +44,7 @@ def main(
     model, tokenizer, checkpoint = get_model_and_tokenizer(model_name, checkpoint_idx, model_kwargs=model_kwargs)
 
     deltas, depth_deltas, units_deltas, final_state, inputs = compute_nth_order_deltas(model, checkpoint, tokenizer, dataset, stop_n=n, max_token_length=maxlen)
+    deltas.delta = th.zeros_like(deltas.delta)
 
     loss_fn = partial(model.loss_function, labels=inputs["labels"], vocab_size=model.config.vocab_size)
 
