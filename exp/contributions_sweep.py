@@ -1,27 +1,11 @@
-from dataclasses import dataclass
-import os
 import gc
-import yaml
 
 import arguably
 import torch as th
 
 from core.model import MODELS
 from exp.contributions import main as subtract_contributions_main
-from exp.contributions import DATA_FILE, METADATA_FILE, OUT_SUBDIR
-
-
-@dataclass(frozen=True)
-class ExperimentConfig:
-    model_name: str
-    dataset_name: str
-    checkpoint_idx: int | None
-    maxlen: int
-    device: str
-    dtype: str
-    load_in_8bit: bool
-    load_in_4bit: bool
-    n: int
+from exp.exp_data import get_exp_data, ExperimentConfig
 
 @arguably.command
 def sweep(
@@ -32,45 +16,13 @@ def sweep(
     device: str = "cuda",
     dtype: str = "bf16",
     load_in_8bit: bool = False,
-    load_in_4bit: bool = True,
+    load_in_4bit: bool = False,
     n: int = 3,
     out_dir: str = "out",
 ) -> None:
     max_checkpoint_idx = len(MODELS[model_name].checkpoints) - 1
 
-    exp_dir = os.path.join(out_dir, OUT_SUBDIR)
-    os.makedirs(exp_dir, exist_ok=True)
-
-    completed_experiments: set[ExperimentConfig] = set()
-    for subdir in os.listdir(exp_dir):
-        exp_path = os.path.join(exp_dir, subdir)
-        if not os.path.isdir(exp_path):
-            continue
-
-        # check if the experiment is already completed
-        data_path = os.path.join(exp_path, DATA_FILE)
-        metadata_path = os.path.join(exp_path, METADATA_FILE)
-        if not os.path.exists(data_path) or not os.path.exists(metadata_path):
-            continue
-
-        with open(metadata_path, "r") as f:
-            metadata = yaml.safe_load(f)
-            if not metadata:
-                continue
-
-            completed_experiments.add(
-                ExperimentConfig(
-                    model_name=metadata["model"],
-                    dataset_name=metadata["dataset"],
-                    checkpoint_idx=metadata["checkpoint_idx"],
-                    maxlen=metadata["maxlen"],
-                    device=metadata["device"],
-                    dtype=metadata["dtype"],
-                    load_in_8bit=metadata["load_in_8bit"],
-                    load_in_4bit=metadata["load_in_4bit"],
-                    n=metadata["n"],
-                )
-            )
+    completed_experiments = set(get_exp_data(out_dir).keys())
 
     # fill in checkpoint_idx. so we start at 0, then max_checkpoint_idx, then max_checkpoint_idx // 2, then max_checkpoint_idx // 4, then 3 * max_checkpoint_idx // 4, etc.
     checkpoint_indices = [max_checkpoint_idx]

@@ -49,9 +49,9 @@ def main(
         "load_in_8bit": load_in_8bit,
         "load_in_4bit": load_in_4bit,
     }
-    model, tokenizer, model_config = get_model_and_tokenizer(model_name, checkpoint_idx, model_kwargs=model_kwargs)
+    model, tokenizer, checkpoint = get_model_and_tokenizer(model_name, checkpoint_idx, model_kwargs=model_kwargs)
 
-    deltas, depth_deltas, units_deltas, final_state, inputs = compute_nth_order_deltas(model, tokenizer, dataset, stop_n=n, max_token_length=maxlen)
+    deltas, depth_deltas, units_deltas, final_state, inputs = compute_nth_order_deltas(model, checkpoint, tokenizer, dataset, stop_n=n, max_token_length=maxlen)
 
     loss_fn = partial(model.loss_function, labels=inputs["labels"], vocab_size=model.config.vocab_size)
 
@@ -69,7 +69,7 @@ def main(
     sorted_delta_losses = sorted(delta_losses, key=lambda x: x.subtractive_loss, reverse=True)
     final_data = [asdict(x) for x in sorted_delta_losses]
 
-    out_timestamp_dir = str(int(time.time()))
+    out_timestamp_dir = str(int(time.time() * 1000))
     final_out_dir = os.path.join(out_dir, OUT_SUBDIR, out_timestamp_dir)
 
     out_filepath = os.path.join(final_out_dir, DATA_FILE)
@@ -80,8 +80,6 @@ def main(
         yaml.dump(final_data, f)
 
     with open(metadata_out_filepath, "w") as f:
-        checkpoint = model_config.checkpoints[checkpoint_idx] if checkpoint_idx is not None else None
-
         metadata = {
             "model": model_name,
             "dataset": dataset_name,

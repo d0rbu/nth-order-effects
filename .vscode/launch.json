@@ -22,5 +22,22 @@
                 "3",
             ],
         },
+        {
+            "name": "viz",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "viz.order_distributions",
+            "args": [
+                "--model-name",
+                "pythia410m",
+                "--dataset-name",
+                "redpajama-1",
+                "--load-in-4bit",
+                "--maxlen",
+                "256",
+                "--n",
+                "3",
+            ],
+        },
     ]
 }

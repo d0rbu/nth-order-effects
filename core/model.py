@@ -7,7 +7,6 @@ from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 from transformers.utils.logging import disable_progress_bar
 from huggingface_hub import list_repo_refs
 import torch as th
-from cachier import cachier
 
 from core.surgical_olmo import SurgicalOlmo2ForCausalLM
 from core.surgical_gpt_neox import SurgicalGPTNeoXForCausalLM
@@ -132,23 +131,24 @@ MODELS = {
 
 disable_progress_bar()
 
-@cachier(cache_dir=".model_tokenizer_cache")
-def get_model_and_tokenizer(model_name: str = "olmo2", checkpoint_idx: int | None = None, model_kwargs: dict[str, Any] = None) -> tuple[PreTrainedModel, PreTrainedTokenizerBase, ModelConfig]:
+def get_model_and_tokenizer(model_name: str = "olmo2", checkpoint_idx: int | None = None, model_kwargs: dict[str, Any] = None) -> tuple[PreTrainedModel, PreTrainedTokenizerBase, Checkpoint | None]:
     assert (model_config := MODELS.get(model_name, None)), f"Model {model_name} not found in MODELS. Available models: {list(MODELS.keys())}"
 
     tokenizer = AutoTokenizer.from_pretrained(model_config.hf_name, use_fast=True)
 
+    checkpoint = None
+    step = None
+
     if checkpoint_idx is None:
         model = AutoModelForCausalLM.from_pretrained(model_config.hf_name, **model_kwargs)
-        step = "latest"
     else:
         checkpoint = model_config.checkpoints[checkpoint_idx]
-        step = str(checkpoint.step)
+        step = checkpoint.step
         model = checkpoint.load_model(model_kwargs)
 
     # clone the model to the surgical version by getting and setting the state dict
     surgical_model = model_config.surgical_class.from_causal_lm(model)
 
-    print(f"Loaded model {model_name} at step {step}")
+    print(f"Loaded model {model_name} at step {step if step is not None else 'latest'}")
 
-    return surgical_model, tokenizer, model_config
+    return surgical_model, tokenizer, checkpoint

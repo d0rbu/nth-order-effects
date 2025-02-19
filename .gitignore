@@ -173,3 +173,5 @@ cython_debug/
 .nth_order_delta_cache
 .model_tokenizer_cache
 out
+
+*.png
