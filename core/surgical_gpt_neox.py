@@ -84,9 +84,13 @@ class SurgicalGPTNeoXAttention(GPTNeoXAttention):
         cos, sin = position_embeddings
         rotated_query_states, rotated_key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
+        attention_in_activation_mask = activation_mask
+        if isinstance(activation_mask, list):
+            attention_in_activation_mask = "attention_activations" in activation_mask
+
         attention_interface: Callable = eager_attention_forward
         if self.config._attn_implementation != "eager":
-            if self.config._attn_implementation in ("sdpa", "flash_attention_2") and "attention_map" in activation_mask:
+            if self.config._attn_implementation in ("sdpa", "flash_attention_2") and attention_in_activation_mask:
                 logger.warning_once(
                     f"Setting `attention_type` to `eager` because `{self.config._attn_implementation}` does not support"
                     f" `output_attentions=True` or `head_mask`."
@@ -276,7 +280,10 @@ class SurgicalGPTNeoXLayer(GPTNeoXLayer):
         activation_mask: bool | list[str] = ["output"],
     ) -> DecoderLayerActivations:
         residual = hidden_states
-        activation_mask_for_attention = [".".join(activation_path.split(".")[1:]) for activation_path in activation_mask if activation_path.startswith("attention_activations.")]
+        if isinstance(activation_mask, bool):
+            activation_mask_for_attention = activation_mask
+        else:
+            activation_mask_for_attention = [".".join(activation_path.split(".")[1:]) for activation_path in activation_mask if activation_path.startswith("attention_activations.")]
 
         attention_normed_input = self.input_layernorm(residual)
         attention_output = self.attention(
@@ -291,7 +298,10 @@ class SurgicalGPTNeoXLayer(GPTNeoXLayer):
             attention_activations = AttentionActivations(output=attention_output)
 
         attention_dropped_output = self.post_attention_dropout(attention_activations.output)
-        activation_mask_for_mlp = [".".join(activation_path.split(".")[1:]) for activation_path in activation_mask if activation_path.startswith("mlp_activations.")]
+        if isinstance(activation_mask, bool):
+            activation_mask_for_mlp = activation_mask
+        else:
+            activation_mask_for_mlp = [".".join(activation_path.split(".")[1:]) for activation_path in activation_mask if activation_path.startswith("mlp_activations.")]
 
         if not self.use_parallel_residual:
             residual += attention_dropped_output
@@ -472,10 +482,13 @@ class SurgicalGPTNeoXModel(SurgicalGPTNeoXPreTrainedModel, GPTNeoXModel):
 
         # decoder layers
         for layer_idx, decoder_layer in enumerate(self.layers[: self.config.num_hidden_layers]):
-            activation_mask_for_layer = [
-                ".".join(activation_path.split(".")[2:]) for activation_path in activation_mask
-                if activation_path.startswith(f"layer_activations.{layer_idx}.") or activation_path.startswith("layer_activations.*.")
-            ]
+            if isinstance(activation_mask, bool):
+                activation_mask_for_layer = activation_mask
+            else:
+                activation_mask_for_layer = [
+                    ".".join(activation_path.split(".")[2:]) for activation_path in activation_mask
+                    if activation_path.startswith(f"layer_activations.{layer_idx}.") or activation_path.startswith("layer_activations.*.")
+                ]
 
             if self.gradient_checkpointing and self.training:
                 layer_output = self._gradient_checkpointing_func(
