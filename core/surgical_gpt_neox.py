@@ -279,7 +279,7 @@ class SurgicalGPTNeoXLayer(GPTNeoXLayer):
         position_embeddings: th.FloatTensor | None = None,
         activation_mask: bool | list[str] = ["output"],
     ) -> DecoderLayerActivations:
-        residual = hidden_states
+        residual = hidden_states.clone()
         if isinstance(activation_mask, bool):
             activation_mask_for_attention = activation_mask
         else:
@@ -342,7 +342,7 @@ class SurgicalGPTNeoXLayer(GPTNeoXLayer):
         attention_mask: th.BoolTensor | None = None,
         position_embeddings: th.FloatTensor | None = None,
     ) -> th.FloatTensor:
-        residual = hidden_states
+        residual = hidden_states.clone()
 
         attention_output = self.post_attention_dropout(
             self.attention(

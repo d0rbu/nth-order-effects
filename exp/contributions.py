@@ -28,7 +28,7 @@ def main(
     checkpoint_idx: int | None = None,
     maxlen: int = 512,
     device: str = "cuda",
-    dtype: str = "fp16",
+    dtype: str = "fp32",
     load_in_8bit: bool = False,
     load_in_4bit: bool = False,
     n: int = 3,

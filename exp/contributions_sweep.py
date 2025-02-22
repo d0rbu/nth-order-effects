@@ -14,7 +14,7 @@ def sweep(
     dataset_name: str = "redpajama-1",
     maxlen: int = 128,
     device: str = "cuda",
-    dtype: str = "fp16",
+    dtype: str = "fp32",
     load_in_8bit: bool = False,
     load_in_4bit: bool = False,
     n: int = 3,

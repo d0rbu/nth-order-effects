@@ -24,6 +24,7 @@ class ReconstructionError:
     cosine: th.Tensor
 
 
+@arguably.command
 def main(
     *args,
     model_name: str = "olmo2",
@@ -31,11 +32,10 @@ def main(
     checkpoint_idx: int | None = None,
     maxlen: int = 512,
     device: str = "cuda",
-    dtype: str = "fp16",
+    dtype: str = "fp32",
     load_in_8bit: bool = False,
     load_in_4bit: bool = False,
     n: int = 3,
-    out_dir: str = "out",
 ) -> None:
     dataset = get_dataset(dataset_name)
     model_kwargs = {
@@ -48,16 +48,10 @@ def main(
 
     deltas, depth_deltas, units_deltas, final_state, inputs = compute_nth_order_deltas(model, checkpoint, tokenizer, dataset, stop_n=n, max_token_length=maxlen)
 
-    loss_fn = partial(model.loss_function, labels=inputs["labels"], vocab_size=model.config.vocab_size)
-
-    output_norm = model.model.norm
-    lm_head = model.get_output_embeddings()
-    output_module = nn.Sequential(output_norm, lm_head)
-
     with th.no_grad():
         reconstructed_activations = reconstruct_from_deltas(deltas.delta, units_deltas, n)
 
-    del dataset, model_kwargs, tokenizer, deltas, depth_deltas, units_deltas, final_state, loss_fn, output_norm, lm_head, output_module
+    del dataset, model_kwargs, tokenizer, deltas, depth_deltas, units_deltas, final_state
     th.cuda.empty_cache()
     gc.collect()
 
@@ -70,9 +64,9 @@ def main(
         activations = model(**inputs, activation_mask=activation_mask, track_activations=True)
         layer_activations = activations.model_activations.layer_activations
 
-        for layer_idx, layer_activation in enumerate(layer_activations):
+        for layer_idx, layer_activation in enumerate(layer_activations[:n]):
             ground_truth = layer_activation.output
-            reconstructed = reconstructed_activations[layer_idx]
+            reconstructed = reconstructed_activations[layer_idx].to(ground_truth.device)
             ground_truth = ground_truth.view(-1, ground_truth.shape[-1])
             reconstructed = reconstructed.view(-1, reconstructed.shape[-1])
 
@@ -86,9 +80,10 @@ def main(
 
     for layer_idx, reconstruction_error in enumerate(reconstruction_errors):
         print(f"Layer {layer_idx} reconstruction error:")
-        print(f"        L1: {reconstruction_error.l1}")
-        print(f"        L2: {reconstruction_error.l2}")
-        print(f"    Cosine: {reconstruction_error.cosine}")
+        print(f"        L1: {reconstruction_error.l1.item()}")
+        print(f"        L2: {reconstruction_error.l2.item()}")
+        print(f"    Cosine: {reconstruction_error.cosine.item()}")
+        print()
 
 def reconstruct_from_deltas(
     base_residual: th.Tensor,
@@ -98,9 +93,9 @@ def reconstruct_from_deltas(
     reconstructed_activations = [None] * n
     current_residual = base_residual.clone()
 
-    for unit_idx, unit_deltas in enumerate(units_deltas):
+    for unit_idx, unit_deltas in enumerate(units_deltas[:n]):
         for delta in unit_deltas:
-            current_residual += delta.delta
+            current_residual += delta.delta.to(current_residual.device)
 
         reconstructed_activations[unit_idx] = current_residual.clone()
 
@@ -108,6 +103,4 @@ def reconstruct_from_deltas(
 
 
 if __name__ == "__main__":
-    command = arguably.command(main)
-
     arguably.run()
