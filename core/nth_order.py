@@ -57,6 +57,198 @@ class NthOrderDelta:
 
         return indices[1:]
 
+def cache_hash(
+    args: tuple[SurgicalModel, PreTrainedTokenizerBase, list[str], int, int],
+    kwargs: dict[str, int],
+) -> str:
+    model = args[0] if len(args) > 0 else kwargs.get("model")
+    checkpoint = args[1] if len(args) > 1 else kwargs.get("checkpoint")
+    tokenizer = args[2] if len(args) > 2 else kwargs.get("tokenizer")
+    dataset = args[3] if len(args) > 3 else kwargs.get("dataset")
+    stop_n = args[4] if len(args) > 4 else kwargs.get("stop_n")
+    max_token_length = args[5] if len(args) > 5 else kwargs.get("max_token_length")
+
+    checkpoint_str = "latest" if checkpoint is None else f"{checkpoint.step}_{checkpoint.num_tokens}"
+    hf_config_str = json.dumps(model.config.to_dict(), sort_keys=True)
+    dataset_str = "_".join(dataset)
+    stop_n_str = str(stop_n)
+    max_token_length_str = str(max_token_length)
+
+    hashes = [hashlib.sha256(arg.encode()).hexdigest() for arg in [checkpoint_str, hf_config_str, dataset_str, stop_n_str, max_token_length_str]]
+
+    return "_".join(hashes)
+
+@cachier(cache_dir=".nth_order_delta_backward_cache", hash_func=cache_hash)
+def compute_nth_order_deltas_backward(
+    model: SurgicalModel,
+    checkpoint: Checkpoint | None,
+    tokenizer: PreTrainedTokenizerBase,
+    dataset: list[str],
+    stop_n: int = 2,
+    max_token_length: int = 512,
+) -> tuple[NthOrderDelta, list[list[NthOrderDelta]], list[list[NthOrderDelta]], th.Tensor, dict]:
+    """Compute up to the max_nth order deltas for the given model and dataset. This function uses backpropagation to compute the nth order deltas."""
+    assert stop_n > 0, "stop_n must be greater than 0"
+
+    # make sure tokenizer has pad token
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    inputs = tokenizer(dataset, return_tensors="pt", padding=True, truncation=True, max_length=max_token_length)
+    inputs["attention_mask"] = inputs["attention_mask"].bool()
+    inputs["input_ids"] = inputs["input_ids"].to(model.device)
+
+    labels = th.full_like(inputs["input_ids"], -100)
+    labels[inputs["attention_mask"]] = inputs["input_ids"][inputs["attention_mask"]]
+    inputs["labels"] = labels
+
+    input_embeddings = model.get_input_embeddings()
+    inputs_embeds = input_embeddings(inputs["input_ids"].to(model.device)).detach()
+
+    num_units = len(model.model.unit_forwards())
+
+    # zeroth_order_delta is the root node, depth_deltas is the deltas in a list ordered by depth, and units_deltas is the deltas in a list ordered by the last unit index
+    zeroth_order_delta, depth_deltas, units_deltas = empty_nth_order_deltas_recursive(num_units=num_units, max_depth=stop_n)
+
+
+@cachier(cache_dir=".nth_order_delta_direct_cache", hash_func=cache_hash)
+def compute_nth_order_deltas_direct(
+    model: SurgicalModel,
+    checkpoint: Checkpoint | None,
+    tokenizer: PreTrainedTokenizerBase,
+    dataset: list[str],
+    stop_n: int = 2,
+    max_token_length: int = 512,
+) -> tuple[NthOrderDelta, list[list[NthOrderDelta]], list[list[NthOrderDelta]], th.Tensor, dict]:
+    """Compute up to the max_nth order deltas for the given model and dataset.
+
+    Args:
+        model (SurgicalModel): The model to compute the nth order deltas for.
+        tokenizer (PreTrainedTokenizerBase): The tokenizer to use for encoding the dataset.
+        dataset (Dataset): The dataset to compute the nth order deltas for.
+        stop_n (int): The maximum order of the deltas to compute. This is exclusive, from 0 to stop_n - 1.
+
+    Returns:
+        NthOrderDelta: The tree of nth order deltas for the given model and dataset.
+        list[list[NthOrderDelta]]: The nth order deltas in a list ordered by depth.
+        list[list[NthOrderDelta]]: The nth order deltas in a list ordered by the last unit index.
+        th.Tensor: The final residual of the model.
+        dict: The inputs used to compute the nth order deltas.
+    """
+    assert stop_n > 0, "stop_n must be greater than 0"
+
+    # make sure tokenizer has pad token
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    inputs = tokenizer(dataset, return_tensors="pt", padding=True, truncation=True, max_length=max_token_length)
+    inputs["attention_mask"] = inputs["attention_mask"].bool()
+    inputs["input_ids"] = inputs["input_ids"].to(model.device)
+
+    labels = th.full_like(inputs["input_ids"], -100)
+    labels[inputs["attention_mask"]] = inputs["input_ids"][inputs["attention_mask"]]
+    inputs["labels"] = labels
+
+    input_embeddings = model.get_input_embeddings()
+    inputs_embeds = input_embeddings(inputs["input_ids"].to(model.device)).detach()
+
+    # the output of unit f_0 is f_0(x) and includes the first order effect of f_0
+    # the output of unit f_1 is f_1(f_0(x) + x) and includes the first order effect of f_1 and the second order effect of f_0 and f_1
+    # to separate these, we consider the first order effect of f_1 to be f_1(x) and the second order effect to be f_1(f_0(x) + x) - f_1(x)
+    # the output of unit f_2 is f_2(f_1(f_0(x) + x) + f_0(x) + x) and includes four effects of order 1, 2, 2, and 3
+    # to separate these, we consider the first order effect of f_2 to be f_2(x), the second order effects of f_0 and f_2 to be f_2(f_0(x) + x) - f_2(x),
+    # the second order effects of f_1 and f_2 to be f_2(f_1(x) + x) - f_2(x), and the third order effect of f_0, f_1, and f_2 to be f_2(f_1(f_0(x) + x) + f_0(x) + x) - f_2(f_1(x) + x) - f_2(f_0(x) + x) + f_2(x)
+    # f_2(f_1(f_0(x) + x) + f_0(x) + x) - f_2(f_0(x) + f_1(x) + x)
+
+    num_units = len(model.model.unit_forwards())
+    num_layers = model.config.num_hidden_layers
+    with th.no_grad():
+        final_residual = model(
+            **inputs,
+            activation_mask=[f"model_activations.layer_activations.{num_layers - 1}.output"],
+        ).model_activations.layer_activations[-1].output
+
+    # zeroth_order_delta is the root node, depth_deltas is the deltas in a list ordered by depth, and units_deltas is the deltas in a list ordered by the last unit index
+    zeroth_order_delta, depth_deltas, units_deltas = empty_nth_order_deltas_recursive(num_units=num_units, max_depth=stop_n)
+
+    raise NotImplementedError("Direct computation of nth order deltas is not yet implemented")
+
+# logic for computing from jacobians
+
+@cachier(cache_dir=".nth_order_delta_jacobian_cache", hash_func=cache_hash)
+def compute_nth_order_deltas_jacobian(
+    model: SurgicalModel,
+    checkpoint: Checkpoint | None,
+    tokenizer: PreTrainedTokenizerBase,
+    dataset: list[str],
+    stop_n: int = 2,
+    max_token_length: int = 512,
+) -> tuple[NthOrderDelta, list[list[NthOrderDelta]], list[list[NthOrderDelta]], th.Tensor, dict]:
+    """Compute up to the max_nth order deltas for the given model and dataset. This function uses jacobians to compute the nth order deltas."""
+    assert stop_n > 0, "stop_n must be greater than 0"
+
+    # make sure tokenizer has pad token
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    inputs = tokenizer(dataset, return_tensors="pt", padding=True, truncation=True, max_length=max_token_length)
+    inputs["attention_mask"] = inputs["attention_mask"].bool()  # why tf is this an int64
+    inputs["input_ids"] = inputs["input_ids"].to(model.device)
+
+    labels = th.full_like(inputs["input_ids"], -100)
+    labels[inputs["attention_mask"]] = inputs["input_ids"][inputs["attention_mask"]]
+    inputs["labels"] = labels
+
+    # the output of unit f_i is f_i(f_{i-1}(f_{i-2}(...(f_0(x) + x)...) + x) + f_{i-2}(...) + ... + x)
+    # we want to linearly separate the terms so that we can get the contributions of each one
+    # we do this by approximating with a taylor series expansion using the jacobian as follows
+    #
+    #    f_i(x + h) ≈ f_i(x) + J_i(x)h
+    #
+    # => f_i(f_{i-1}(... + x) + f_{i-2}(...) + ... + x) ≈ J_i(x)(f_{i-1}(... + x) + f_{i-2}(...) + ... + f_0(x)) + f_i(x)
+    #                                                   ≈ f_i(x) + J_i(x)f_0(x) + J_i(x)(f_1(f_0(x) + x)) + ...
+    #                                                   ≈ f_i(x) + J_i(x)f_0(x) + J_i(x)J_1(x)f_0(x) + J_i(x)f_1(x)
+    # in order, the above RHS gives us the first order effect of f_i, the second order effect of f_i and f_0, the third order effect of f_i, f_0, and f_1, the second order effect of f_i and f_1, and so on
+    # in general, the nth order effect of f_{i_0}, f_{i_1}, ..., f_{i_n} is given by
+    #
+    #    J_{i_n}(x)J_{i_{n-1}}(x)...J_{i_1}(x)f_{i_0}(x)
+
+    num_units = len(model.model.unit_forwards())
+    num_layers = model.config.num_hidden_layers
+    total_iterations = num_units * inputs["attention_mask"].sum().item()
+
+    jacobians_and_outputs, base = compute_unit_jacobians_and_outputs(model, inputs)
+    with th.no_grad():
+        final_residual = model(
+            **inputs,
+            activation_mask=[f"model_activations.layer_activations.{num_layers - 1}.output"],
+        ).model_activations.layer_activations[-1].output
+
+    # zeroth_order_delta is the root node, depth_deltas is the deltas in a list ordered by depth, and units_deltas is the deltas in a list ordered by the last unit index
+    zeroth_order_delta, depth_deltas, units_deltas = empty_nth_order_deltas_recursive(delta=base, num_units=num_units, max_depth=stop_n)
+
+    with tqdm(total=total_iterations, desc="Computing nth order deltas", leave=False) as progress_bar:
+        for unit_deltas, jacobian_output_generator in zip(units_deltas, jacobians_and_outputs):
+            for batch_idx, seq_idx, jacobian, output in jacobian_output_generator:
+                with th.no_grad():
+                    for unit_delta in unit_deltas:
+                        if unit_delta.delta is None:
+                            unit_delta.delta = th.empty_like(base, device=th.device("cpu"))
+
+                        if unit_delta.parent is zeroth_order_delta:
+                            unit_delta.delta[batch_idx, seq_idx] = output.to(th.device("cpu"))
+                        else:
+                            # because we go through this in order of units, the parent is guaranteed to be computed
+                            # since the parent's unit_idx < current unit_idx
+                            unit_delta.delta[batch_idx, seq_idx] = (jacobian @ unit_delta.parent.delta[batch_idx, seq_idx].to(jacobian.device)).to(th.device("cpu"))
+
+                    del jacobian, output
+                    th.cuda.empty_cache()
+
+                    progress_bar.update(1)
+
+    return zeroth_order_delta, depth_deltas, units_deltas, final_residual, inputs
+
 def compute_unit_jacobians_and_outputs(model: SurgicalModel, inputs: dict) -> tuple[Iterable[Iterable[tuple[int, int, th.Tensor, th.Tensor]]], th.Tensor]:
     input_embeddings = model.get_input_embeddings()
     inputs_embeds = input_embeddings(inputs["input_ids"].to(model.device)).detach()
@@ -129,116 +321,6 @@ def compute_unit_jacobians_and_outputs(model: SurgicalModel, inputs: dict) -> tu
             yield jacobian_output_generator()
 
     return unit_jacobian_output_generator(), inputs_embeds
-
-def cache_hash(
-    args: tuple[SurgicalModel, PreTrainedTokenizerBase, list[str], int, int],
-    kwargs: dict[str, int],
-) -> str:
-    model = args[0] if len(args) > 0 else kwargs.get("model")
-    checkpoint = args[1] if len(args) > 1 else kwargs.get("checkpoint")
-    tokenizer = args[2] if len(args) > 2 else kwargs.get("tokenizer")
-    dataset = args[3] if len(args) > 3 else kwargs.get("dataset")
-    stop_n = args[4] if len(args) > 4 else kwargs.get("stop_n")
-    max_token_length = args[5] if len(args) > 5 else kwargs.get("max_token_length")
-
-    checkpoint_str = "latest" if checkpoint is None else f"{checkpoint.step}_{checkpoint.num_tokens}"
-    hf_config_str = json.dumps(model.config.to_dict(), sort_keys=True)
-    dataset_str = "_".join(dataset)
-    stop_n_str = str(stop_n)
-    max_token_length_str = str(max_token_length)
-
-    hashes = [hashlib.sha256(arg.encode()).hexdigest() for arg in [checkpoint_str, hf_config_str, dataset_str, stop_n_str, max_token_length_str]]
-
-    return "_".join(hashes)
-
-@cachier(cache_dir=".nth_order_delta_cache", hash_func=cache_hash)
-def compute_nth_order_deltas(
-    model: SurgicalModel,
-    checkpoint: Checkpoint | None,
-    tokenizer: PreTrainedTokenizerBase,
-    dataset: list[str],
-    stop_n: int = 2,
-    max_token_length: int = 512,
-) -> tuple[NthOrderDelta, list[list[NthOrderDelta]], list[list[NthOrderDelta]], th.Tensor, dict]:
-    """Compute up to the max_nth order deltas for the given model and dataset.
-
-    Args:
-        model (SurgicalModel): The model to compute the nth order deltas for.
-        tokenizer (PreTrainedTokenizerBase): The tokenizer to use for encoding the dataset.
-        dataset (Dataset): The dataset to compute the nth order deltas for.
-        stop_n (int): The maximum order of the deltas to compute. This is exclusive, from 0 to stop_n - 1.
-
-    Returns:
-        NthOrderDelta: The tree of nth order deltas for the given model and dataset.
-        list[list[NthOrderDelta]]: The nth order deltas in a list ordered by depth.
-        list[list[NthOrderDelta]]: The nth order deltas in a list ordered by the last unit index.
-        th.Tensor: The final residual of the model.
-        dict: The inputs used to compute the nth order deltas.
-    """
-    assert stop_n > 0, "stop_n must be greater than 0"
-
-    # make sure tokenizer has pad token
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-
-    inputs = tokenizer(dataset, return_tensors="pt", padding=True, truncation=True, max_length=max_token_length)
-    inputs["attention_mask"] = inputs["attention_mask"].bool()  # why tf is this an int64
-    inputs["input_ids"] = inputs["input_ids"].to(model.device)
-
-    labels = th.full_like(inputs["input_ids"], -100)
-    labels[inputs["attention_mask"]] = inputs["input_ids"][inputs["attention_mask"]]
-    inputs["labels"] = labels
-
-    # the output of unit f_i is f_i(f_{i-1}(f_{i-2}(...(f_0(x) + x)...) + x) + f_{i-2}(...) + ... + x)
-    # we want to linearly separate the terms so that we can get the contributions of each one
-    # we do this by approximating with a taylor series expansion using the jacobian as follows
-    #
-    #    f_i(x + h) ≈ f_i(x) + J_i(x)h
-    #
-    # => f_i(f_{i-1}(... + x) + f_{i-2}(...) + ... + x) ≈ J_i(x)(f_{i-1}(... + x) + f_{i-2}(...) + ... + f_0(x)) + f_i(x)
-    #                                                   ≈ f_i(x) + J_i(x)f_0(x) + J_i(x)(f_1(f_0(x) + x)) + ...
-    #                                                   ≈ f_i(x) + J_i(x)f_0(x) + J_i(x)J_1(x)f_0(x) + J_i(x)f_1(x)
-    # in order, the above RHS gives us the first order effect of f_i, the second order effect of f_i and f_0, the third order effect of f_i, f_0, and f_1, the second order effect of f_i and f_1, and so on
-    # in general, the nth order effect of f_{i_0}, f_{i_1}, ..., f_{i_n} is given by
-    #
-    #    J_{i_n}(x)J_{i_{n-1}}(x)...J_{i_1}(x)f_{i_0}(x)
-
-    num_units = len(model.model.unit_forwards())
-    num_layers = model.config.num_hidden_layers
-    total_iterations = num_units * inputs["attention_mask"].sum().item()
-
-    jacobians_and_outputs, base = compute_unit_jacobians_and_outputs(model, inputs)
-    with th.no_grad():
-        final_residual = model(
-            **inputs,
-            activation_mask=[f"model_activations.layer_activations.{num_layers - 1}.output"],
-        ).model_activations.layer_activations[-1].output
-
-    # zeroth_order_delta is the root node, depth_deltas is the deltas in a list ordered by depth, and units_deltas is the deltas in a list ordered by the last unit index
-    zeroth_order_delta, depth_deltas, units_deltas = empty_nth_order_deltas_recursive(delta=base, num_units=num_units, max_depth=stop_n)
-
-    with tqdm(total=total_iterations, desc="Computing nth order deltas", leave=False) as progress_bar:
-        for unit_deltas, jacobian_output_generator in zip(units_deltas, jacobians_and_outputs):
-            for batch_idx, seq_idx, jacobian, output in jacobian_output_generator:
-                with th.no_grad():
-                    for unit_delta in unit_deltas:
-                        if unit_delta.delta is None:
-                            unit_delta.delta = th.empty_like(base, device=th.device("cpu"))
-
-                        if unit_delta.parent is zeroth_order_delta:
-                            unit_delta.delta[batch_idx, seq_idx] = output.to(th.device("cpu"))
-                        else:
-                            # because we go through this in order of units, the parent is guaranteed to be computed
-                            # since the parent's unit_idx < current unit_idx
-                            unit_delta.delta[batch_idx, seq_idx] = (jacobian @ unit_delta.parent.delta[batch_idx, seq_idx].to(jacobian.device)).to(th.device("cpu"))
-
-                    del jacobian, output
-                    th.cuda.empty_cache()
-
-                    progress_bar.update(1)
-
-    return zeroth_order_delta, depth_deltas, units_deltas, final_residual, inputs
-
 
 # hehe dfs
 def empty_nth_order_deltas_recursive(
