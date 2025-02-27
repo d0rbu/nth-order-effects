@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from typing import Iterable
 import json
 import hashlib
+from math import comb
 
 import torch as th
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
@@ -10,6 +11,8 @@ from tqdm import tqdm
 from cachier import cachier
 
 from core.model import SurgicalModel, Checkpoint
+from core.surgical_gpt_neox import SurgicalGPTNeoXForCausalLM
+from core.surgical_olmo import SurgicalOlmo2ForCausalLM
 
 
 @dataclass
@@ -106,9 +109,27 @@ def compute_nth_order_deltas_backward(
     inputs_embeds = input_embeddings(inputs["input_ids"].to(model.device)).detach()
 
     num_units = len(model.model.unit_forwards())
+    # num_units choose stop_n
+    total_iterations = comb(num_units, stop_n)
+
+    with th.no_grad():
+        match model:
+            case SurgicalGPTNeoXForCausalLM():
+                layer_activations = model(
+                    **inputs,
+                    activation_mask=[f"model_activations.layer_activations.*.output"],
+                )
+                layer_activations = [inputs_embeds] + [layer_activation.output for layer_activation in layer_activations]
+            case SurgicalOlmo2ForCausalLM():
+                raise NotImplementedError("SurgicalOlmo2ForCausalLM is not yet supported")
 
     # zeroth_order_delta is the root node, depth_deltas is the deltas in a list ordered by depth, and units_deltas is the deltas in a list ordered by the last unit index
     zeroth_order_delta, depth_deltas, units_deltas = empty_nth_order_deltas_recursive(num_units=num_units, max_depth=stop_n)
+
+    with tqdm(total=total_iterations, desc="Computing nth order gradient deltas", leave=False) as progress_bar:
+        for unit_deltas, unit, unit_input, unit_output in zip(units_deltas, reversed(model.model.unit_forwards()), reversed(layer_activations[:-1]), reversed(layer_activations[1:])):
+            for unit_delta in unit_deltas:
+                raise NotImplementedError("TODO: Implement backpropagation for nth order gradient deltas")
 
 
 @cachier(cache_dir=".nth_order_delta_direct_cache", hash_func=cache_hash)
