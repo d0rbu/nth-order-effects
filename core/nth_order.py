@@ -6,6 +6,7 @@ import hashlib
 from math import comb
 
 import torch as th
+import torch.nn as nn
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 from tqdm import tqdm
 from cachier import cachier
@@ -105,6 +106,10 @@ def compute_nth_order_deltas_backward(
     labels[inputs["attention_mask"]] = inputs["input_ids"][inputs["attention_mask"]]
     inputs["labels"] = labels
 
+    output_norm = model.model.norm
+    lm_head = model.get_output_embeddings()
+    output_module = nn.Sequential(output_norm, lm_head)
+
     input_embeddings = model.get_input_embeddings()
     inputs_embeds = input_embeddings(inputs["input_ids"].to(model.device)).detach()
 
@@ -115,21 +120,38 @@ def compute_nth_order_deltas_backward(
     with th.no_grad():
         match model:
             case SurgicalGPTNeoXForCausalLM():
-                layer_activations = model(
+                activations = model(
                     **inputs,
-                    activation_mask=[f"model_activations.layer_activations.*.output"],
+                    activation_mask=["model_activations.layer_activations.*.output"],
                 )
-                layer_activations = [inputs_embeds] + [layer_activation.output for layer_activation in layer_activations]
+                layer_activations = [inputs_embeds] + [layer_activation.output for layer_activation in activations.model_activations.layer_activations]
             case SurgicalOlmo2ForCausalLM():
                 raise NotImplementedError("SurgicalOlmo2ForCausalLM is not yet supported")
 
+    loss = model.loss_function(
+        logits=output_module(layer_activations[-1]),
+        labels=inputs["labels"],
+        vocab_size=model.config.vocab_size,
+    )
+    final_gradient = th.autograd.grad(
+        loss,
+        layer_activations[-1],
+    )[0]
+
     # zeroth_order_delta is the root node, depth_deltas is the deltas in a list ordered by depth, and units_deltas is the deltas in a list ordered by the last unit index
-    zeroth_order_delta, depth_deltas, units_deltas = empty_nth_order_deltas_recursive(num_units=num_units, max_depth=stop_n)
+    zeroth_order_delta, depth_deltas, units_deltas = empty_nth_order_deltas_recursive(delta=final_gradient, num_units=num_units, max_depth=stop_n)
 
     with tqdm(total=total_iterations, desc="Computing nth order gradient deltas", leave=False) as progress_bar:
         for unit_deltas, unit, unit_input, unit_output in zip(units_deltas, reversed(model.model.unit_forwards()), reversed(layer_activations[:-1]), reversed(layer_activations[1:])):
             for unit_delta in unit_deltas:
-                raise NotImplementedError("TODO: Implement backpropagation for nth order gradient deltas")
+                unit_delta.delta = th.autograd.grad(
+                    unit_output,
+                    unit_input,
+                    grad_outputs=unit_delta.parent.delta,
+                    retain_graph=True,
+                )[0]
+
+                progress_bar.update(1)
 
 
 @cachier(cache_dir=".nth_order_delta_direct_cache", hash_func=cache_hash)
