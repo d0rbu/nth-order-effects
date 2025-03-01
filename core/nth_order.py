@@ -117,24 +117,18 @@ def compute_nth_order_deltas_backward(
     # num_units choose stop_n
     total_iterations = comb(num_units, stop_n)
 
-    with th.no_grad():
-        match model:
-            case SurgicalGPTNeoXForCausalLM():
-                activations = model(
-                    **inputs,
-                    activation_mask=["model_activations.layer_activations.*.output"],
-                )
-                layer_activations = [inputs_embeds] + [layer_activation.output for layer_activation in activations.model_activations.layer_activations]
-            case SurgicalOlmo2ForCausalLM():
-                raise NotImplementedError("SurgicalOlmo2ForCausalLM is not yet supported")
+    match model:
+        case SurgicalGPTNeoXForCausalLM():
+            activations = model(
+                **inputs,
+                activation_mask=["model_activations.layer_activations.*.output", "loss"],
+            )
+            layer_activations = [inputs_embeds] + [layer_activation.output for layer_activation in activations.model_activations.layer_activations]
+        case SurgicalOlmo2ForCausalLM():
+            raise NotImplementedError("SurgicalOlmo2ForCausalLM is not yet supported")
 
-    loss = model.loss_function(
-        logits=output_module(layer_activations[-1]),
-        labels=inputs["labels"],
-        vocab_size=model.config.vocab_size,
-    )
     final_gradient = th.autograd.grad(
-        loss,
+        activations.loss,
         layer_activations[-1],
     )[0]
 
@@ -152,6 +146,8 @@ def compute_nth_order_deltas_backward(
                 )[0]
 
                 progress_bar.update(1)
+
+    return zeroth_order_delta, depth_deltas, units_deltas, final_gradient, inputs
 
 
 @cachier(cache_dir=".nth_order_delta_direct_cache", hash_func=cache_hash)
