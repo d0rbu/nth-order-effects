@@ -90,7 +90,7 @@ def compute_nth_order_deltas_backward(
     dataset: list[str],
     stop_n: int = 2,
     max_token_length: int = 512,
-) -> tuple[NthOrderDelta, list[list[NthOrderDelta]], list[list[NthOrderDelta]], th.Tensor, dict]:
+) -> tuple[NthOrderDelta, list[list[NthOrderDelta]], list[list[NthOrderDelta]], th.Tensor, dict, list[th.Tensor]]:
     """Compute up to the max_nth order deltas for the given model and dataset. This function uses backpropagation to compute the nth order deltas."""
     assert stop_n > 0, "stop_n must be greater than 0"
 
@@ -147,7 +147,15 @@ def compute_nth_order_deltas_backward(
 
                 progress_bar.update(1)
 
-    return zeroth_order_delta, depth_deltas, units_deltas, final_gradient, inputs
+    gradients = [
+        th.autograd.grad(
+            activations.loss,
+            layer_activation,
+        )[0]
+        for layer_activation in layer_activations
+    ]
+
+    return zeroth_order_delta, depth_deltas, units_deltas, final_gradient, inputs, gradients
 
 
 @cachier(cache_dir=".nth_order_delta_direct_cache", hash_func=cache_hash)
