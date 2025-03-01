@@ -13,6 +13,7 @@ DTYPE_MAP = {
 DATA_FILE = "data.yaml"
 METADATA_FILE = "metadata.yaml"
 CONTRIBUTIONS_OUT_SUBDIR = "contributions"
+BACKWARD_CONTRIBUTIONS_OUT_SUBDIR = "backward_contributions"
 
 
 @dataclass(frozen=True)
@@ -30,8 +31,9 @@ class ExperimentConfig:
 
 def get_exp_data(
     out_dir: str = "out",
+    out_subdir: str = CONTRIBUTIONS_OUT_SUBDIR,
 ) -> dict[ExperimentConfig, str]:
-    exp_dir = os.path.join(out_dir, CONTRIBUTIONS_OUT_SUBDIR)
+    exp_dir = os.path.join(out_dir, out_subdir)
     os.makedirs(exp_dir, exist_ok=True)
 
     completed_experiments: dict[ExperimentConfig, str] = {}

@@ -14,7 +14,7 @@ from tqdm import tqdm
 from core.data import get_dataset
 from core.model import get_model_and_tokenizer
 from core.nth_order import compute_nth_order_deltas_backward, NthOrderDelta
-from exp.exp_data import DTYPE_MAP, DATA_FILE, METADATA_FILE, CONTRIBUTIONS_OUT_SUBDIR
+from exp.exp_data import DTYPE_MAP, DATA_FILE, METADATA_FILE, BACKWARD_CONTRIBUTIONS_OUT_SUBDIR
 
 
 @dataclass
@@ -164,10 +164,15 @@ def main(
             avg_l1_norm_by_unit=avg_l1_norm_by_unit,
         )
 
-    # TODO: convert to final_data
+    final_data_all_stats = [asdict(stat) for stat in all_stats]
+    final_data_unit_stats = [asdict(stat) for stat in unit_stats]
+    final_data = {
+        "all_stats": final_data_all_stats,
+        "unit_stats": final_data_unit_stats,
+    }
 
     out_timestamp_dir = str(int(time.time() * 1000))
-    final_out_dir = os.path.join(out_dir, CONTRIBUTIONS_OUT_SUBDIR, out_timestamp_dir)
+    final_out_dir = os.path.join(out_dir, BACKWARD_CONTRIBUTIONS_OUT_SUBDIR, out_timestamp_dir)
 
     out_filepath = os.path.join(final_out_dir, DATA_FILE)
     metadata_out_filepath = os.path.join(final_out_dir, METADATA_FILE)

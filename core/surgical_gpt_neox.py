@@ -285,7 +285,7 @@ class SurgicalGPTNeoXLayer(GPTNeoXLayer):
         else:
             activation_mask_for_attention = [".".join(activation_path.split(".")[1:]) for activation_path in activation_mask if activation_path.startswith("attention_activations.")]
 
-        attention_normed_input = self.input_layernorm(residual)
+        attention_normed_input = self.input_layernorm(residual.clone())
         attention_output = self.attention(
             hidden_states=attention_normed_input,
             position_embeddings=position_embeddings,
@@ -306,7 +306,7 @@ class SurgicalGPTNeoXLayer(GPTNeoXLayer):
         if not self.use_parallel_residual:
             residual += attention_dropped_output
 
-        mlp_normed_input = self.post_attention_layernorm(residual)
+        mlp_normed_input = self.post_attention_layernorm(residual.clone())
         mlp_output = self.mlp(
             mlp_normed_input,
             activation_mask=activation_mask_for_mlp,
