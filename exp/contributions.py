@@ -12,7 +12,7 @@ import torch.nn as nn
 
 from core.data import get_dataset
 from core.model import get_model_and_tokenizer
-from core.nth_order import compute_nth_order_deltas, NthOrderDelta
+from core.nth_order import compute_nth_order_deltas_jacobian, NthOrderDelta
 from exp.exp_data import DTYPE_MAP, DATA_FILE, METADATA_FILE, CONTRIBUTIONS_OUT_SUBDIR
 
 
@@ -43,7 +43,7 @@ def main(
     }
     model, tokenizer, checkpoint = get_model_and_tokenizer(model_name, checkpoint_idx, model_kwargs=model_kwargs)
 
-    deltas, depth_deltas, units_deltas, final_state, inputs = compute_nth_order_deltas(model, checkpoint, tokenizer, dataset, stop_n=n, max_token_length=maxlen)
+    deltas, depth_deltas, units_deltas, final_state, inputs = compute_nth_order_deltas_jacobian(model, checkpoint, tokenizer, dataset, stop_n=n, max_token_length=maxlen)
     deltas.delta = th.zeros_like(deltas.delta)
 
     loss_fn = partial(model.loss_function, labels=inputs["labels"], vocab_size=model.config.vocab_size)

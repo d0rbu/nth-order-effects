@@ -170,9 +170,7 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
-.nth_order_delta_cache
-.nth_order_delta_backward_cache
-.model_tokenizer_cache
+.*_cache
 out
 
 figures

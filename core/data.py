@@ -20,6 +20,11 @@ DATASETS = {
         # 0, 1, 64, 65, 128, 129...
         selection=chain(*[range(source_idx * 64, source_idx * 64 + 2) for source_idx in range(7)])
     ),
+    "redpajama-pico": DatasetConfig(
+        # gets the first sample from each source
+        # 0, 64, 128...
+        selection=range(0, 64 * 7, 64)
+    ),
     "redpajama-1": DatasetConfig(
         selection=[139]  # https://www.sensory.com/category/security/biometrics-security/
     ),

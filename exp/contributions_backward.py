@@ -36,18 +36,18 @@ class UnitStats:
     unit_index: int
 
     # metrics to measure similarity with the original gradient
-    avg_cosine_similarity_by_depth: list[float]
-    avg_dot_product_by_depth: list[float]
-    avg_l2_distance_by_depth: list[float]
-    avg_l1_distance_by_depth: list[float]
+    avg_cosine_similarity_by_depth: list[float | None]
+    avg_dot_product_by_depth: list[float | None]
+    avg_l2_distance_by_depth: list[float | None]
+    avg_l1_distance_by_depth: list[float | None]
     avg_cosine_similarity_by_unit: list[float | None]
     avg_dot_product_by_unit: list[float | None]
     avg_l2_distance_by_unit: list[float | None]
     avg_l1_distance_by_unit: list[float | None]
 
     # metrics to measure the delta gradient itself
-    avg_l2_norm_by_depth: list[float]
-    avg_l1_norm_by_depth: list[float]
+    avg_l2_norm_by_depth: list[float | None]
+    avg_l1_norm_by_depth: list[float | None]
     avg_l2_norm_by_unit: list[float | None]
     avg_l1_norm_by_unit: list[float | None]
 
@@ -73,7 +73,7 @@ def main(
     }
     model, tokenizer, checkpoint = get_model_and_tokenizer(model_name, checkpoint_idx, model_kwargs=model_kwargs)
 
-    deltas, depth_deltas, units_deltas, final_state, inputs, gradients = compute_nth_order_deltas_backward(model, checkpoint, tokenizer, dataset, stop_n=n, max_token_length=maxlen)
+    deltas, units_deltas, inputs, gradients = compute_nth_order_deltas_backward(model, checkpoint, tokenizer, dataset, stop_n=n, max_token_length=maxlen)
 
     attention_mask = inputs["attention_mask"]
     num_units = len(units_deltas)
@@ -98,7 +98,7 @@ def main(
         for nth_order_delta in tqdm(unit_deltas, total=len(unit_deltas), leave=False):
             raw_unit_indices = nth_order_delta.unit_indices()
             unit_indices = [num_units - 1 - unit_idx for unit_idx in raw_unit_indices]
-            depth = len(unit_indices)
+            depth = len(unit_indices) - 1
 
             raw_gradient = nth_order_delta.delta  # B, T, D
             gradient = raw_gradient[attention_mask]  # T', D
@@ -135,16 +135,16 @@ def main(
             avg_l2_norm_by_depth[depth].add(avg_l2_norm)
             avg_l1_norm_by_depth[depth].add(avg_l1_norm)
 
-        avg_cosine_similarity_by_depth = [sum(x) / len(x) for x in avg_cosine_similarity_by_depth]
-        avg_dot_product_by_depth = [sum(x) / len(x) for x in avg_dot_product_by_depth]
-        avg_l2_distance_by_depth = [sum(x) / len(x) for x in avg_l2_distance_by_depth]
-        avg_l1_distance_by_depth = [sum(x) / len(x) for x in avg_l1_distance_by_depth]
+        avg_cosine_similarity_by_depth = [sum(x) / len(x) if len(x) > 0 else None for x in avg_cosine_similarity_by_depth]
+        avg_dot_product_by_depth = [sum(x) / len(x) if len(x) > 0 else None for x in avg_dot_product_by_depth]
+        avg_l2_distance_by_depth = [sum(x) / len(x) if len(x) > 0 else None for x in avg_l2_distance_by_depth]
+        avg_l1_distance_by_depth = [sum(x) / len(x) if len(x) > 0 else None for x in avg_l1_distance_by_depth]
         avg_cosine_similarity_by_unit = [sum(x) / len(x) if len(x) > 0 else None for x in avg_cosine_similarity_by_unit]
         avg_dot_product_by_unit = [sum(x) / len(x) if len(x) > 0 else None for x in avg_dot_product_by_unit]
         avg_l2_distance_by_unit = [sum(x) / len(x) if len(x) > 0 else None for x in avg_l2_distance_by_unit]
         avg_l1_distance_by_unit = [sum(x) / len(x) if len(x) > 0 else None for x in avg_l1_distance_by_unit]
-        avg_l2_norm_by_depth = [sum(x) / len(x) for x in avg_l2_norm_by_depth]
-        avg_l1_norm_by_depth = [sum(x) / len(x) for x in avg_l1_norm_by_depth]
+        avg_l2_norm_by_depth = [sum(x) / len(x) if len(x) > 0 else None for x in avg_l2_norm_by_depth]
+        avg_l1_norm_by_depth = [sum(x) / len(x) if len(x) > 0 else None for x in avg_l1_norm_by_depth]
         avg_l2_norm_by_unit = [sum(x) / len(x) if len(x) > 0 else None for x in avg_l2_norm_by_unit]
         avg_l1_norm_by_unit = [sum(x) / len(x) if len(x) > 0 else None for x in avg_l1_norm_by_unit]
 
