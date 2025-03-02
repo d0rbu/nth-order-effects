@@ -75,12 +75,15 @@ def main(
 
     deltas, units_deltas, inputs, gradients = compute_nth_order_deltas_backward(model, checkpoint, tokenizer, dataset, stop_n=n, max_token_length=maxlen)
 
+    gradients = gradients[:-1]  # we dont need the very last gradient as we only need input gradients to compare against
+    del deltas
+
     attention_mask = inputs["attention_mask"]
     num_units = len(units_deltas)
 
     unit_stats = [None for _ in range(num_units)]
     all_stats = []
-    for unit_idx, (unit_deltas, raw_unit_gradient) in tqdm(enumerate(zip(reversed(units_deltas), gradients[:-1])), total=num_units, leave=False):
+    for unit_idx, (unit_deltas, raw_unit_gradient) in tqdm(enumerate(zip(reversed(units_deltas), gradients)), desc="Computing stats for units", total=num_units, leave=False):
         unit_gradient = raw_unit_gradient[attention_mask]  # T', D
         avg_cosine_similarity_by_depth = [set() for _ in range(n)]
         avg_dot_product_by_depth = [set() for _ in range(n)]
@@ -95,12 +98,12 @@ def main(
         avg_l2_norm_by_unit = [set() for _ in range(num_units)]
         avg_l1_norm_by_unit = [set() for _ in range(num_units)]
 
-        for nth_order_delta in tqdm(unit_deltas, total=len(unit_deltas), leave=False):
+        for delta_idx, nth_order_delta in tqdm(enumerate(unit_deltas), desc=f"Computing stats for unit {unit_idx}", total=len(unit_deltas), leave=False):
             raw_unit_indices = nth_order_delta.unit_indices()
             unit_indices = [num_units - 1 - unit_idx for unit_idx in raw_unit_indices]
             depth = len(unit_indices) - 1
 
-            raw_gradient = nth_order_delta.delta  # B, T, D
+            raw_gradient = nth_order_delta.delta.to(model.device)  # B, T, D
             gradient = raw_gradient[attention_mask]  # T', D
             avg_cosine_similarity = th.nn.functional.cosine_similarity(gradient, unit_gradient, dim=-1).mean().item()
             avg_dot_product = (gradient * unit_gradient).sum(dim=-1).mean().item()
@@ -135,6 +138,10 @@ def main(
             avg_l2_norm_by_depth[depth].add(avg_l2_norm)
             avg_l1_norm_by_depth[depth].add(avg_l1_norm)
 
+            unit_deltas[delta_idx] = None
+            del raw_gradient, gradient
+            th.cuda.empty_cache()
+
         avg_cosine_similarity_by_depth = [sum(x) / len(x) if len(x) > 0 else None for x in avg_cosine_similarity_by_depth]
         avg_dot_product_by_depth = [sum(x) / len(x) if len(x) > 0 else None for x in avg_dot_product_by_depth]
         avg_l2_distance_by_depth = [sum(x) / len(x) if len(x) > 0 else None for x in avg_l2_distance_by_depth]
@@ -163,6 +170,15 @@ def main(
             avg_l2_norm_by_unit=avg_l2_norm_by_unit,
             avg_l1_norm_by_unit=avg_l1_norm_by_unit,
         )
+
+        units_deltas[len(units_deltas) - 1 - unit_idx] = None
+        gradients[unit_idx] = None
+        del unit_gradient
+        th.cuda.empty_cache()
+
+    del model, tokenizer, dataset, inputs, gradients
+    th.cuda.empty_cache()
+    gc.collect()
 
     final_data_all_stats = [asdict(stat) for stat in all_stats]
     final_data_unit_stats = [asdict(stat) for stat in unit_stats]

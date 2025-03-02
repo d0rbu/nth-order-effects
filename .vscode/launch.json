@@ -87,5 +87,23 @@
                 "6",
             ],
         },
+        {
+            "name": "backward sweep exp medium",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "exp.contributions_sweep",
+            "args": [
+                "--exp-type",
+                "contributions_backward",
+                "--model-name",
+                "pythia410m",
+                "--dataset-name",
+                "redpajama-pico",
+                "--maxlen",
+                "1024",
+                "--n",
+                "3",
+            ],
+        },
     ]
 }

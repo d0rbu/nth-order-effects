@@ -135,26 +135,31 @@ def compute_nth_order_deltas_backward(
         for layer_activation in layer_activations
     ]
 
+    del activations, inputs_embeds
+
     # zeroth_order_delta is the root node, depth_deltas is the deltas in a list ordered by depth, and units_deltas is the deltas in a list ordered by the last unit index
-    zeroth_order_delta, depth_deltas, units_deltas = empty_nth_order_deltas_recursive(delta=gradients[-1], num_units=num_units, max_depth=stop_n)
+    zeroth_order_delta, depth_deltas, units_deltas = empty_nth_order_deltas_recursive(delta=gradients[-1].cpu(), num_units=num_units, max_depth=stop_n)
 
     total_iterations = sum(len(unit_deltas) for unit_deltas in units_deltas)
 
     with tqdm(total=total_iterations, desc="Computing nth order gradient deltas", leave=False) as progress_bar:
-        for unit_deltas, unit, unit_input, unit_output in zip(units_deltas, reversed(model.model.unit_forwards()), reversed(layer_activations[:-1]), reversed(layer_activations[1:])):
+        for inverse_unit_idx, (unit_deltas, unit, unit_input, unit_output) in enumerate(zip(units_deltas, reversed(model.model.unit_forwards()), reversed(layer_activations[:-1]), reversed(layer_activations[1:]))):
+            unit_output_idx = num_units - inverse_unit_idx
             for unit_delta in unit_deltas:
-                try:
-                    unit_delta.delta = th.autograd.grad(
-                        unit_output,
-                        unit_input,
-                        grad_outputs=unit_delta.parent.delta,
-                        retain_graph=True,
-                    )[0]
-                except Exception as e:
-                    print(f"Error occurred at unit {unit_delta}")
-                    raise e
+                is_last = unit_delta is unit_deltas[-1]
+
+                unit_delta.delta = th.autograd.grad(
+                    unit_output,
+                    unit_input,
+                    grad_outputs=unit_delta.parent.delta.to(model.device),
+                    retain_graph=not is_last,
+                )[0].cpu()
 
                 progress_bar.update(1)
+
+            layer_activations[unit_output_idx] = None
+            del unit, unit_input, unit_output
+            th.cuda.empty_cache()
 
     return zeroth_order_delta, units_deltas, inputs, gradients
 
