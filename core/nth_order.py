@@ -97,9 +97,11 @@ def compute_nth_order_deltas_backward(
     dataset: list[str],
     stop_n: int = 2,
     max_token_length: int = 512,
+    batchsize: int = 0,
 ) -> tuple[NthOrderDelta, list[list[NthOrderDelta]], list[list[NthOrderDelta]], dict, list[th.Tensor]]:
     """Compute up to the max_nth order deltas for the given model and dataset. This function uses backpropagation to compute the nth order deltas."""
     assert stop_n > 0, "stop_n must be greater than 0"
+    assert batchsize <= 0, "batching not implemented yet"
 
     # make sure tokenizer has pad token
     if tokenizer.pad_token is None:

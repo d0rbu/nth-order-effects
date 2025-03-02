@@ -63,6 +63,7 @@ def main(
     load_in_4bit: bool = False,
     n: int = 3,
     out_dir: str = "out",
+    batchsize: int = 0,
 ) -> None:
     dataset = get_dataset(dataset_name)
     model_kwargs = {
@@ -73,7 +74,7 @@ def main(
     }
     model, tokenizer, checkpoint = get_model_and_tokenizer(model_name, checkpoint_idx, model_kwargs=model_kwargs)
 
-    deltas, units_deltas, inputs, gradients = compute_nth_order_deltas_backward(model, checkpoint, tokenizer, dataset, stop_n=n, max_token_length=maxlen)
+    deltas, units_deltas, inputs, gradients = compute_nth_order_deltas_backward(model, checkpoint, tokenizer, dataset, stop_n=n, max_token_length=maxlen, batchsize=batchsize)
 
     gradients = gradients[:-1]  # we dont need the very last gradient as we only need input gradients to compare against
     del deltas
