@@ -7,7 +7,7 @@ import arguably
 import torch as th
 import matplotlib.pyplot as plt
 from tqdm import tqdm
-from typing import Literal
+from typing import Literal, Callable
 
 from core.model import MODELS
 from exp.contributions import DATA_FILE
@@ -36,10 +36,13 @@ def figure_key(
 class StatConfig:
     name: str
     title: str
+    derived: None | Callable[[dict], th.Tensor] = None
 
 
 STAT_CONFIGS = {
     "cosine_similarity": StatConfig(name="Cosine similarity", title="avg cosine similarity between nth-order gradient and true gradient"),
+    "l2_norm": StatConfig(name="L2 norm", title="avg L2 norm of nth-order gradient"),
+    "projected_onto_normalized": StatConfig(name="Projection magnitude", title="avg magnitude of nth-order gradient projected onto true gradient", derived=lambda row: row["cosine_similarity"] * row["l2_norm"]),
 }
 
 
@@ -84,8 +87,13 @@ def main(
             checkpoint_nth_order_distribution = [[] for _ in range(n)]  # O, N
 
             for row in data:
-                stat_value = row.get(stat, None)
                 order = len(row.get("unit_indices", [])) - 1
+
+                computation_fn = config.derived
+                if computation_fn is None:
+                    stat_value = row.get(stat, None)
+                else:
+                    stat_value = computation_fn(row)
 
                 if stat_value is None or order < 0:
                     continue
@@ -132,6 +140,7 @@ def main(
         image_dir = os.path.join(FIGURES_DIR, key)
         os.makedirs(image_dir, exist_ok=True)
         plt.savefig(os.path.join(image_dir, f"{stat}.png"))
+        plt.clf()
 
     # # store a bunch of softlinks to the data that was used to generate the figure
     # for exp_path in exp_paths:
