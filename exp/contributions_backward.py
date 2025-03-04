@@ -19,6 +19,7 @@ from exp.exp_data import DTYPE_MAP, DATA_FILE, METADATA_FILE, BACKWARD_CONTRIBUT
 
 @dataclass
 class DeltaStats:
+    unit_index: int
     unit_indices: list[int]
     
     # metrics to measure similarity with the original gradient
@@ -74,34 +75,33 @@ def main(
     }
     model, tokenizer, checkpoint = get_model_and_tokenizer(model_name, checkpoint_idx, model_kwargs=model_kwargs)
 
-    deltas, units_deltas, inputs, gradients = compute_nth_order_deltas_backward(model, checkpoint, tokenizer, dataset, stop_n=n, max_token_length=maxlen, batchsize=batchsize)
+    deltas, units_deltas, units_deltas_cumulative, inputs, gradients = compute_nth_order_deltas_backward(model, checkpoint, tokenizer, dataset, stop_n=n, max_token_length=maxlen, batchsize=batchsize)
 
-    gradients = gradients[:-1]  # we dont need the very last gradient as we only need input gradients to compare against
     del deltas
 
     attention_mask = inputs["attention_mask"]
-    num_units = len(units_deltas)
+    num_units = len(units_deltas_cumulative)
 
     unit_stats = [None for _ in range(num_units)]
     all_stats = []
-    for unit_idx, (unit_deltas, raw_unit_gradient) in tqdm(enumerate(zip(reversed(units_deltas), gradients)), desc="Computing stats for units", total=num_units, leave=False):
+    for unit_idx, (unit_deltas, raw_unit_gradient) in tqdm(enumerate(zip(reversed(units_deltas_cumulative), gradients)), desc="Computing stats for units", total=num_units, leave=False):
         unit_gradient = raw_unit_gradient[attention_mask]  # T', D
-        avg_cosine_similarity_by_depth = [set() for _ in range(n)]
-        avg_dot_product_by_depth = [set() for _ in range(n)]
-        avg_l2_distance_by_depth = [set() for _ in range(n)]
-        avg_l1_distance_by_depth = [set() for _ in range(n)]
+        avg_cosine_similarity_by_depth = [set() for _ in range(n + 1)]
+        avg_dot_product_by_depth = [set() for _ in range(n + 1)]
+        avg_l2_distance_by_depth = [set() for _ in range(n + 1)]
+        avg_l1_distance_by_depth = [set() for _ in range(n + 1)]
         avg_cosine_similarity_by_unit = [set() for _ in range(num_units)]
         avg_dot_product_by_unit = [set() for _ in range(num_units)]
         avg_l2_distance_by_unit = [set() for _ in range(num_units)]
         avg_l1_distance_by_unit = [set() for _ in range(num_units)]
-        avg_l2_norm_by_depth = [set() for _ in range(n)]
-        avg_l1_norm_by_depth = [set() for _ in range(n)]
+        avg_l2_norm_by_depth = [set() for _ in range(n + 1)]
+        avg_l1_norm_by_depth = [set() for _ in range(n + 1)]
         avg_l2_norm_by_unit = [set() for _ in range(num_units)]
         avg_l1_norm_by_unit = [set() for _ in range(num_units)]
 
         for delta_idx, nth_order_delta in tqdm(enumerate(unit_deltas), desc=f"Computing stats for unit {unit_idx}", total=len(unit_deltas), leave=False):
             raw_unit_indices = nth_order_delta.unit_indices()
-            unit_indices = [num_units - 1 - unit_idx for unit_idx in raw_unit_indices]
+            unit_indices = [num_units - 2 - unit_idx for unit_idx in raw_unit_indices]
             depth = len(unit_indices) - 1
 
             raw_gradient = nth_order_delta.delta.to(model.device)  # B, T, D
@@ -114,6 +114,7 @@ def main(
             avg_l1_norm = th.norm(gradient, p=1, dim=-1).mean().item()
 
             stats = DeltaStats(
+                unit_index=unit_idx,
                 unit_indices=unit_indices,
                 cosine_similarity=avg_cosine_similarity,
                 dot_product=avg_dot_product,
@@ -139,7 +140,6 @@ def main(
             avg_l2_norm_by_depth[depth].add(avg_l2_norm)
             avg_l1_norm_by_depth[depth].add(avg_l1_norm)
 
-            unit_deltas[delta_idx] = None
             del raw_gradient, gradient
             th.cuda.empty_cache()
 
@@ -172,7 +172,6 @@ def main(
             avg_l1_norm_by_unit=avg_l1_norm_by_unit,
         )
 
-        units_deltas[len(units_deltas) - 1 - unit_idx] = None
         gradients[unit_idx] = None
         del unit_gradient
         th.cuda.empty_cache()

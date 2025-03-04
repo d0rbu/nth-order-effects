@@ -26,7 +26,7 @@ def figure_key(
     load_in_4bit: bool,
     n: int,
 ) -> str:
-    return f"model={model_name},dataset={dataset_name},maxlen={maxlen},dtype={dtype},load_in_8bit={load_in_8bit},load_in_4bit={load_in_4bit},n={n},measure=mean"
+    return f"model={model_name},dataset={dataset_name},maxlen={maxlen},dtype={dtype},load_in_8bit={load_in_8bit},load_in_4bit={load_in_4bit},n={n},measure=unit"
 
 
 @dataclass

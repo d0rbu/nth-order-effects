@@ -16,7 +16,7 @@ from exp.exp_data import get_exp_data, BACKWARD_CONTRIBUTIONS_OUT_SUBDIR
 
 
 FIGURES_DIR = "figures_backward"
-COLORS = plt.rcParams['axes.prop_cycle'].by_key()['color']
+COLORMAP = plt.get_cmap("viridis")
 NAN = float("nan")
 
 
@@ -44,13 +44,14 @@ STAT_CONFIGS = {
     "l2_norm": StatConfig(name="L2 norm", title="avg L2 norm of nth-order gradient"),
     "projected_onto_normalized": StatConfig(name="Projection magnitude", title="avg magnitude of nth-order gradient projected onto true gradient", derived=lambda row: row["cosine_similarity"] * row["l2_norm"]),
 }
-TOP_K_REGEX = re.compile(r"top(\d+)")
-
+TOP_K_REGEX = re.compile(r"^top(\d+)$")
+TOP_K_GRADIENT_REGEX = re.compile(r"^top(\d+)_gradient$")
+ALL_MEASURES = ["mean", "median", "sum", "sum_normalized", "bounds", "top100", "top2_gradient"]
 
 @dataclass
 class Datapoint:
     value: float
-    unit_indices: list[int]
+    unit_indices: tuple[int]
 
 
 @arguably.command
@@ -64,8 +65,13 @@ def main(
     load_in_4bit: bool = False,
     n: int = 3,
     out_dir: str = "out",
-    measure: str = "mean",
+    measure: str = "all",
 ) -> None:
+    if measure == "all":
+        measures = ALL_MEASURES
+    else:
+        measures = [measure]
+
     completed_experiments = get_exp_data(out_dir, BACKWARD_CONTRIBUTIONS_OUT_SUBDIR)
     filtered_experiments = {
         completed_experiment: exp_path
@@ -82,8 +88,8 @@ def main(
     assert len(filtered_experiments) > 0, "No experiments found with the given parameters"
     sorted_experiments = sorted(filtered_experiments.items(), key=lambda x: x[0].checkpoint_idx)
 
-    all_stat_distributions = {stat_name: [[] for _ in range(n)] for stat_name in STAT_CONFIGS.keys()}  # stat, O, T, N
-    all_stat_unit_indices = {stat_name: [[] for _ in range(n)] for stat_name in STAT_CONFIGS.keys()}  # stat, O, T, N
+    all_stat_distributions = {stat_name: [[] for _ in range(n + 1)] for stat_name in STAT_CONFIGS.keys()}  # stat, O, T, N
+    all_stat_unit_indices = {stat_name: [[] for _ in range(n + 1)] for stat_name in STAT_CONFIGS.keys()}  # stat, O, T, N
     exp_paths = []
     for experiment, exp_path in tqdm(sorted_experiments, desc="Loading data", total=len(sorted_experiments)):
         exp_paths.append(exp_path)
@@ -92,11 +98,11 @@ def main(
             data = yaml.safe_load(f)["all_stats"]
 
         for stat, config in STAT_CONFIGS.items():
-            checkpoint_nth_order_distribution = [[] for _ in range(n)]  # O, N
-            checkpoint_unit_indices = [[] for _ in range(n)]  # O, N
+            checkpoint_nth_order_distribution = [[] for _ in range(n + 1)]  # O, N
+            checkpoint_unit_indices = [[] for _ in range(n + 1)]  # O, N
 
             for row in data:
-                unit_indices = row.get("unit_indices", [])
+                unit_indices = tuple(row.get("unit_indices", []))
                 order = len(unit_indices) - 1
 
                 computation_fn = config.derived
@@ -126,84 +132,136 @@ def main(
         stat_distribution = all_stat_distributions[stat]
         stat_unit_indices = all_stat_unit_indices[stat]
 
-        if measure == "mean":
-            mean_values = [[checkpoint_values.mean().item() for checkpoint_values in order_values] for order_values in stat_distribution]
-            for order, mean_value in enumerate(mean_values):
-                plt.plot(steps, mean_value, label=f"Order {order + 1}", color=COLORS[order])
-        elif measure == "median":
-            bounds = th.tensor([0.25, 0.5, 0.75])
-            nan_bounds = th.full_like(bounds, NAN)
-            # O, T, N -> O, T, 3
-            nth_order_bounds = [[th.quantile(checkpoint_values, bounds) if checkpoint_values.shape[0] > 0 else nan_bounds for checkpoint_values in order_values] for order_values in stat_distribution]
-            # O, T, 3 -> O, 3, T
-            nth_order_bounds = [th.stack(order_bounds, dim=1) for order_bounds in nth_order_bounds]
+        for measure in measures:
+            if measure == "mean":
+                colors = COLORMAP(th.linspace(0, 1, n + 1))
 
-            for order, bounds in enumerate(nth_order_bounds):
-                plt.plot(steps, bounds[1], label=f"Order {order + 1}", color=COLORS[order])
-                plt.fill_between(steps, bounds[0], bounds[2], alpha=0.2, color=COLORS[order])
-        elif measure == "bounds":
-            bounds = th.tensor([0.0, 0.5, 1.0])
-            nan_bounds = th.full_like(bounds, NAN)
-            # O, T, N -> O, T, 3
-            nth_order_bounds = [[th.quantile(checkpoint_values, bounds) if checkpoint_values.shape[0] > 0 else nan_bounds for checkpoint_values in order_values] for order_values in stat_distribution]
-            # O, T, 3 -> O, 3, T
-            nth_order_bounds = [th.stack(order_bounds, dim=1) for order_bounds in nth_order_bounds]
+                mean_values = [[checkpoint_values.mean().item() for checkpoint_values in order_values] for order_values in stat_distribution]
+                for order, mean_value in enumerate(mean_values):
+                    plt.plot(steps, mean_value, label=f"Order {order}", color=colors[order])
+            elif measure == "median":
+                colors = COLORMAP(th.linspace(0, 1, n + 1))
 
-            for order, bounds in enumerate(nth_order_bounds):
-                plt.plot(steps, bounds[1], label=f"Order {order + 1}", color=COLORS[order])
-                plt.fill_between(steps, bounds[0], bounds[2], alpha=0.2, color=COLORS[order])
-        elif measure == "sum":
-            sum_values = [th.stack(order_values).sum(dim=-1) for order_values in stat_distribution]
-            # stacked line graph with each order colored differently
-            cumsum = th.zeros_like(sum_values[0])
-            for order, sum_value in enumerate(sum_values):
-                new_cumsum = cumsum + sum_value
-                plt.plot(steps, new_cumsum, label=f"Order {order + 1}", color=COLORS[order])
-                plt.fill_between(steps, cumsum, new_cumsum, alpha=0.2, color=COLORS[order])
-                cumsum = new_cumsum
-        elif TOP_K_REGEX.match(measure):
-            k = int(TOP_K_REGEX.match(measure).group(1))
+                bounds = th.tensor([0.25, 0.5, 0.75])
+                nan_bounds = th.full_like(bounds, NAN)
+                # O, T, N -> O, T, 3
+                nth_order_bounds = [[th.quantile(checkpoint_values, bounds) if checkpoint_values.shape[0] > 0 else nan_bounds for checkpoint_values in order_values] for order_values in stat_distribution]
+                # O, T, 3 -> O, 3, T
+                nth_order_bounds = [th.stack(order_bounds, dim=1) for order_bounds in nth_order_bounds]
 
-            # get the top k globally. so not for each order, but as if all orders are combined
-            # T, N'
-            combined_timeseries = [[] for _ in sorted_experiments]
-            for order_idx, (order_values, order_unit_indices) in enumerate(zip(stat_distribution, stat_unit_indices)):
-                for time_idx, (values, unit_indices) in enumerate(zip(order_values, order_unit_indices)):
-                    combined_timeseries[time_idx].extend(Datapoint(value=value.item(), unit_indices=unit_indices) for value, unit_indices in zip(values, unit_indices))
+                for order, bounds in enumerate(nth_order_bounds):
+                    plt.plot(steps, bounds[1], label=f"Order {order}", color=colors[order])
+                    plt.fill_between(steps, bounds[0], bounds[2], alpha=0.2, color=colors[order])
+            elif measure == "bounds":
+                colors = COLORMAP(th.linspace(0, 1, n + 1))
 
-            ordered_combined_timeseries = [sorted(signals, key=lambda x: x.value, reverse=True) for signals in combined_timeseries]
-            # T, k
-            top_k_combined_timeseries = [signals[:k] for signals in ordered_combined_timeseries]
+                bounds = th.tensor([0.0, 0.5, 1.0])
+                nan_bounds = th.full_like(bounds, NAN)
+                # O, T, N -> O, T, 3
+                nth_order_bounds = [[th.quantile(checkpoint_values, bounds) if checkpoint_values.shape[0] > 0 else nan_bounds for checkpoint_values in order_values] for order_values in stat_distribution]
+                # O, T, 3 -> O, 3, T
+                nth_order_bounds = [th.stack(order_bounds, dim=1) for order_bounds in nth_order_bounds]
 
-            # O, T
-            order_relative_proportions = [th.zeros(len(steps)) for _ in range(n)]
-            for time_idx, top_k_signals in enumerate(top_k_combined_timeseries):
-                for signal in top_k_signals:
-                    order = len(signal.unit_indices) - 1
-                    order_relative_proportions[order][time_idx] += 1 / k
+                for order, bounds in enumerate(nth_order_bounds):
+                    plt.plot(steps, bounds[1], label=f"Order {order}", color=colors[order])
+                    plt.fill_between(steps, bounds[0], bounds[2], alpha=0.2, color=colors[order])
+            elif measure == "sum":
+                colors = COLORMAP(th.linspace(0, 1, n + 1))
 
-            # normalized stacked line graph showing what proportion of the top k come from each order
-            cumsum = th.zeros_like(order_relative_proportions[0])
-            for order_idx, order_proportions in enumerate(order_relative_proportions):
-                order_proportions = th.tensor(order_proportions)
-                new_cumsum = cumsum + order_proportions
+                sum_values = [th.stack(order_values).sum(dim=-1) for order_values in stat_distribution]
+                # stacked line graph with each order colored differently
+                cumsum = th.zeros_like(sum_values[0])
+                for order, sum_value in enumerate(sum_values):
+                    new_cumsum = cumsum + sum_value
+                    plt.plot(steps, new_cumsum, label=f"Order {order}", color=colors[order])
+                    plt.fill_between(steps, cumsum, new_cumsum, alpha=0.2, color=colors[order])
+                    cumsum = new_cumsum
+            elif measure == "sum_normalized":
+                colors = COLORMAP(th.linspace(0, 1, n + 1))
 
-                plt.plot(steps, new_cumsum, label=f"Order {order_idx + 1}", color=COLORS[order_idx])
-                plt.fill_between(steps, cumsum, new_cumsum, alpha=0.2, color=COLORS[order_idx])
-                cumsum = new_cumsum
-        else:
-            raise ValueError(f"Unknown measure {measure}")
+                sum_values = [th.stack(order_values).sum(dim=-1) for order_values in stat_distribution]
+                # stacked line graph with each order colored differently
+                total = sum(sum_values)
+                cumsum = th.zeros_like(sum_values[0])
+                for order, sum_value in enumerate(sum_values):
+                    normalized_sum_value = sum_value / total
+                    new_cumsum = cumsum + normalized_sum_value
+                    plt.plot(steps, new_cumsum, label=f"Order {order}", color=colors[order])
+                    plt.fill_between(steps, cumsum, new_cumsum, alpha=0.2, color=colors[order])
+                    cumsum = new_cumsum
+            elif TOP_K_REGEX.match(measure):
+                colors = COLORMAP(th.linspace(0, 1, n + 1))
 
-        plt.xlabel("Checkpoint step")
-        plt.ylabel(config.name)
-        plt.legend()
-        plt.title(config.title)
+                k = int(TOP_K_REGEX.match(measure).group(1))
 
-        key = figure_key(model_name, dataset_name, maxlen, dtype, load_in_8bit, load_in_4bit, n, measure)
-        image_dir = os.path.join(FIGURES_DIR, key)
-        os.makedirs(image_dir, exist_ok=True)
-        plt.savefig(os.path.join(image_dir, f"{stat}.png"))
-        plt.clf()
+                # get the top k globally. so not for each order, but as if all orders are combined
+                # T, N'
+                combined_timeseries = [[] for _ in sorted_experiments]
+                for order, (order_values, order_unit_indices) in enumerate(zip(stat_distribution, stat_unit_indices)):
+                    for time_idx, (values, unit_indices) in enumerate(zip(order_values, order_unit_indices)):
+                        combined_timeseries[time_idx].extend(Datapoint(value=value.item(), unit_indices=unit_indices) for value, unit_indices in zip(values, unit_indices))
+
+                ordered_combined_timeseries = [sorted(signals, key=lambda x: x.value, reverse=True) for signals in combined_timeseries]
+                # T, k
+                top_k_combined_timeseries = [signals[:k] for signals in ordered_combined_timeseries]
+
+                # O, T
+                order_relative_proportions = [th.zeros(len(steps)) for _ in range(n + 1)]
+                for time_idx, top_k_signals in enumerate(top_k_combined_timeseries):
+                    for signal in top_k_signals:
+                        order = len(signal.unit_indices) - 1
+                        order_relative_proportions[order][time_idx] += 1 / k
+
+                # normalized stacked line graph showing what proportion of the top k come from each order
+                cumsum = th.zeros_like(order_relative_proportions[0])
+                for order, order_proportions in enumerate(order_relative_proportions):
+                    order_proportions = th.tensor(order_proportions)
+                    new_cumsum = cumsum + order_proportions
+
+                    plt.plot(steps, new_cumsum, label=f"Order {order}", color=colors[order])
+                    plt.fill_between(steps, cumsum, new_cumsum, alpha=0.2, color=colors[order])
+                    cumsum = new_cumsum
+            elif TOP_K_GRADIENT_REGEX.match(measure):
+                k = int(TOP_K_GRADIENT_REGEX.match(measure).group(1))
+
+                # get the top k globally. so not for each order, but as if all orders are combined
+                # T, N'
+                combined_timeseries = [[] for _ in sorted_experiments]
+                for order, (order_values, order_unit_indices) in enumerate(zip(stat_distribution, stat_unit_indices)):
+                    for time_idx, (values, unit_indices) in enumerate(zip(order_values, order_unit_indices)):
+                        combined_timeseries[time_idx].extend(Datapoint(value=value.item(), unit_indices=unit_indices) for value, unit_indices in zip(values, unit_indices))
+
+                ordered_combined_timeseries = [sorted(signals, key=lambda x: x.value, reverse=True) for signals in combined_timeseries]
+                # T, k
+                top_k_combined_timeseries = [signals[:k] for signals in ordered_combined_timeseries]
+
+                # set of tuples of unit indices flattened from above
+                # of length N''
+                all_circuits_to_track = list(set(signal.unit_indices for signals in top_k_combined_timeseries for signal in signals))
+                colors = COLORMAP(th.linspace(0, 1, len(all_circuits_to_track)))
+
+                # N'', T
+                circuit_signals = [[] for _ in all_circuits_to_track]
+                for time_idx, signals in enumerate(ordered_combined_timeseries):
+                    for circuit_idx, circuit_indices in enumerate(all_circuits_to_track):
+                        circuit_value = sum(signal.value for signal in signals if signal.unit_indices == circuit_indices)
+                        circuit_signals[circuit_idx].append(circuit_value)
+
+                for circuit_idx, (circuit_indices, circuit_signal) in enumerate(zip(all_circuits_to_track, circuit_signals)):
+                    plt.plot(steps, circuit_signal, label=circuit_indices, color=colors[circuit_idx])
+            else:
+                raise ValueError(f"Unknown measure {measure}")
+
+            plt.xlabel("Checkpoint step")
+            plt.ylabel(config.name)
+            plt.legend()
+            plt.title(config.title)
+
+            key = figure_key(model_name, dataset_name, maxlen, dtype, load_in_8bit, load_in_4bit, n, measure)
+            image_dir = os.path.join(FIGURES_DIR, key)
+            os.makedirs(image_dir, exist_ok=True)
+            plt.savefig(os.path.join(image_dir, f"{stat}.png"))
+            plt.clf()
 
     # # store a bunch of softlinks to the data that was used to generate the figure
     # for exp_path in exp_paths:

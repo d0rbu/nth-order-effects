@@ -67,7 +67,7 @@ class NthOrderDelta:
             indices = [current_node.unit_idx] + indices
             current_node = current_node.parent
 
-        return indices[1:]
+        return tuple(indices)
 
 def cache_hash(
     args: tuple[SurgicalModel, PreTrainedTokenizerBase, list[str], int, int],
@@ -140,7 +140,7 @@ def compute_nth_order_deltas_backward(
     del activations, inputs_embeds
 
     # zeroth_order_delta is the root node, depth_deltas is the deltas in a list ordered by depth, and units_deltas is the deltas in a list ordered by the last unit index
-    zeroth_order_delta, depth_deltas, units_deltas = empty_nth_order_deltas_recursive(delta=gradients[-1].cpu(), num_units=num_units, max_depth=stop_n)
+    zeroth_order_delta, depth_deltas, units_deltas, units_deltas_cumulative = empty_nth_order_deltas_recursive(delta=gradients[-1].cpu(), num_units=num_units, max_depth=stop_n)
 
     total_iterations = sum(len(unit_deltas) for unit_deltas in units_deltas)
 
@@ -155,7 +155,7 @@ def compute_nth_order_deltas_backward(
                     unit_input,
                     grad_outputs=unit_delta.parent.delta.to(model.device),
                     retain_graph=not is_last,
-                )[0].cpu()
+                )[0].cpu() - unit_delta.parent.delta
 
                 progress_bar.update(1)
 
@@ -163,7 +163,10 @@ def compute_nth_order_deltas_backward(
             del unit, unit_input, unit_output
             th.cuda.empty_cache()
 
-    return zeroth_order_delta, units_deltas, inputs, gradients
+    units_deltas = [[zeroth_order_delta]] + units_deltas
+    units_deltas_cumulative = [[zeroth_order_delta]] + units_deltas_cumulative
+
+    return zeroth_order_delta, units_deltas, units_deltas_cumulative, inputs, gradients
 
 
 @cachier(cache_dir=".nth_order_delta_direct_cache", hash_func=cache_hash)
@@ -385,40 +388,47 @@ def empty_nth_order_deltas_recursive(
     num_units: int = 64,
     depth_deltas: list[list[NthOrderDelta]] | None = None,
     unit_deltas: list[list[NthOrderDelta]] | None = None,
+    unit_deltas_cumulative: list[list[NthOrderDelta]] | None = None,
     max_depth: int = 1,
 ) -> tuple[NthOrderDelta, list[list[NthOrderDelta]], list[list[NthOrderDelta]]]:
     if depth == 0:
         assert delta is not None, "base must be provided if depth is 0"
         assert unit_deltas is None, "unit_deltas must be None if depth is 0"
+        assert unit_deltas_cumulative is None, "unit_deltas_cumulative must be None if depth is 0"
         assert unit_idx == -1, "unit_idx must be -1 if depth is 0"
 
         nth_order_delta = NthOrderDelta(unit_idx=-1, delta=delta)
         depth_deltas = [[nth_order_delta]] + [[] for _ in range(max_depth)]
         unit_deltas = [[] for _ in range(num_units)]
+        unit_deltas_cumulative = [[nth_order_delta] for _ in range(num_units)]
         delta = None
     else:
         assert delta is None, "base must be None if depth is not 0"
         assert unit_deltas is not None, "unit_deltas must be provided if depth is not 0"
+        assert unit_deltas_cumulative is not None, "unit_deltas_cumulative must be provided if depth is not 0"
         assert unit_idx > -1, "unit_idx must be non-negative if depth is not 0"
 
         nth_order_delta = NthOrderDelta(unit_idx=unit_idx)
         depth_deltas[depth].append(nth_order_delta)
         unit_deltas[unit_idx].append(nth_order_delta)
+        for following_index in range(unit_idx, num_units):
+            unit_deltas_cumulative[following_index].append(nth_order_delta)
 
     if depth >= max_depth:
-        return nth_order_delta, depth_deltas, unit_deltas
+        return nth_order_delta, depth_deltas, unit_deltas, unit_deltas_cumulative
 
     for new_unit_idx in range(unit_idx + 1, num_units):
-        new_nth_order_delta, _, _ = empty_nth_order_deltas_recursive(
+        new_nth_order_delta, _, _, _ = empty_nth_order_deltas_recursive(
             delta=delta,
             depth=depth + 1,
             unit_idx=new_unit_idx,
             num_units=num_units,
             depth_deltas=depth_deltas,
             unit_deltas=unit_deltas,
+            unit_deltas_cumulative=unit_deltas_cumulative,
             max_depth=max_depth,
         )
         new_nth_order_delta.parent = nth_order_delta
         nth_order_delta.children.append(new_nth_order_delta)
 
-    return nth_order_delta, depth_deltas, unit_deltas
+    return nth_order_delta, depth_deltas, unit_deltas, unit_deltas_cumulative
