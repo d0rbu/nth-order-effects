@@ -46,7 +46,7 @@ STAT_CONFIGS = {
 }
 TOP_K_REGEX = re.compile(r"^top(\d+)$")
 TOP_K_GRADIENT_REGEX = re.compile(r"^top(\d+)_gradient$")
-ALL_MEASURES = ["mean", "median", "sum", "sum_normalized", "bounds", "top100", "top2_gradient"]
+ALL_MEASURES = ["mean", "median", "sum", "sum_normalized", "bounds", "top100", "top3_gradient"]
 
 @dataclass
 class Datapoint:

@@ -432,3 +432,56 @@ def empty_nth_order_deltas_recursive(
         nth_order_delta.children.append(new_nth_order_delta)
 
     return nth_order_delta, depth_deltas, unit_deltas, unit_deltas_cumulative
+
+def empty_nth_order_deltas_sampled(
+    delta: th.Tensor | None = None,
+    num_units: int = 64,
+    max_depth: int = 1,
+    num_samples: int = 4096,
+) -> tuple[NthOrderDelta, list[list[NthOrderDelta]], list[list[NthOrderDelta]]]:
+    root = NthOrderDelta(unit_idx=-1, delta=delta)
+    depth_deltas = [[root]] + [[] for _ in range(max_depth)]
+    unit_deltas = [[] for _ in range(num_units)]
+    unit_deltas_cumulative = [[root] for _ in range(num_units)]
+
+    max_by_order = calculate_max_by_order(num_units, max_depth)
+
+    # determine how many of each order we should have
+    num_samples_by_order = []
+    num_samples_left = num_samples
+    for order, max_samples in enumerate(max_by_order):
+        # if we were to divide evenly among the remaining orders
+        allotted_samples = num_samples_left // (max_depth - order)
+        num_samples = min(allotted_samples, max_samples)
+        num_samples_left -= num_samples
+        num_samples_by_order.append(num_samples)
+
+    # sample the deltas
+
+def empty_nth_order_deltas_sampled_by_circuit(
+    delta: th.Tensor | None = None,
+    num_units: int = 64,
+    max_depth: int = 1,
+    num_samples: int = 4096,
+) -> tuple[NthOrderDelta, list[list[NthOrderDelta]], list[list[NthOrderDelta]]]:
+    root = NthOrderDelta(unit_idx=-1, delta=delta)
+    depth_deltas = [[root]] + [[] for _ in range(max_depth)]
+    unit_deltas = [[] for _ in range(num_units)]
+    unit_deltas_cumulative = [[root] for _ in range(num_units)]
+
+    max_by_order = comb(num_units, max_depth)
+
+    # sample the deltas
+
+def calculate_max_by_order(num_units: int, max_depth: int) -> list[int]:
+    max_by_order = [0] * max_depth
+
+    for order in range(max_depth):
+        if order == 0:
+            max_by_order[order] = num_units
+            continue
+
+        for circuit_start_idx in range(num_units):
+            max_by_order[order] += comb(num_units - circuit_start_idx - 1, order - 1) * (circuit_start_idx + 1)
+
+    return max_by_order
