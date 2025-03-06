@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from typing import Iterable
 import json
 import hashlib
+import random
 from math import comb
 
 import torch as th
@@ -22,7 +23,30 @@ class NthOrderDelta:
     delta: th.Tensor | None = None
     parent: "NthOrderDelta | None" = None
     children: dict[int, "NthOrderDelta"] = field(default_factory=dict)
-    saturated: bool = False
+    num_units: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.parent is not None:
+            if self.num_units is None:
+                self.num_units = self.parent.num_units
+            else:
+                assert self.parent.num_units == self.num_units, "num_units must be the same as the parent's num_units"
+        else:
+            assert self.num_units is not None, "num_units must be provided if there is no parent"
+
+        self.update_saturated()
+
+    @property
+    def saturated(self) -> bool:
+        return self.__saturated
+
+    def is_saturated(self, num_units: int) -> bool:
+        if self.saturated:
+            return True
+
+        if len(self.children) == num_units - self.unit_idx - 1:
+            self.saturated = True
+            return True
 
     def __getitem__(self, indices: tuple[int] | int) -> "NthOrderDelta":
         if not isinstance(indices, tuple):
@@ -43,12 +67,15 @@ class NthOrderDelta:
 
         idx, *rest = indices
 
+        if idx <= self.unit_idx:
+            raise ValueError(f"Cannot set child with unit index {idx} on node with unit index {self.unit_idx}")
+
         if not rest:
             self.children[idx] = value
             return
 
         if idx not in self.children:
-            self.children[idx] = NthOrderDelta(unit_idx=idx)
+            self.children[idx] = NthOrderDelta(unit_idx=idx, parent=self)
 
         self.children[idx][rest] = value
 
@@ -58,7 +85,7 @@ class NthOrderDelta:
         else:
             delta_repr = f"Tensor(shape={self.delta.shape}, dtype={self.delta.dtype})"
 
-        return f"NthOrderDelta(unit_indices={self.unit_indices()}, delta={delta_repr})"
+        return f"NthOrderDelta(unit_indices={self.unit_indices()}, delta={delta_repr}, num_units={self.num_units})"
 
     def unit_indices(self) -> list[int]:
         current_node = self
@@ -69,6 +96,17 @@ class NthOrderDelta:
             current_node = current_node.parent
 
         return tuple(indices)
+
+    def update_saturated(self) -> None:
+        if getattr(self, "__saturated", False):
+            return
+
+        all_possible_children = set(range(self.unit_idx + 1, self.num_units))
+        all_saturated_children = set(child.unit_idx for child in self.children.values() if child.saturated)
+        if all_possible_children.issubset(all_saturated_children):
+            self.saturated = True
+            if self.parent is not None:
+                self.parent.update_saturated()
 
 def cache_hash(
     args: tuple[SurgicalModel, PreTrainedTokenizerBase, list[str], int, int],
@@ -398,7 +436,7 @@ def empty_nth_order_deltas_recursive(
         assert unit_deltas_cumulative is None, "unit_deltas_cumulative must be None if depth is 0"
         assert unit_idx == -1, "unit_idx must be -1 if depth is 0"
 
-        nth_order_delta = NthOrderDelta(unit_idx=-1, delta=delta)
+        nth_order_delta = NthOrderDelta(unit_idx=-1, delta=delta, num_units=num_units)
         depth_deltas = [[nth_order_delta]] + [[] for _ in range(max_depth)]
         unit_deltas = [[] for _ in range(num_units)]
         unit_deltas_cumulative = [[nth_order_delta] for _ in range(num_units)]
@@ -409,7 +447,7 @@ def empty_nth_order_deltas_recursive(
         assert unit_deltas_cumulative is not None, "unit_deltas_cumulative must be provided if depth is not 0"
         assert unit_idx > -1, "unit_idx must be non-negative if depth is not 0"
 
-        nth_order_delta = NthOrderDelta(unit_idx=unit_idx)
+        nth_order_delta = NthOrderDelta(unit_idx=unit_idx, num_units=num_units)
         depth_deltas[depth].append(nth_order_delta)
         unit_deltas[unit_idx].append(nth_order_delta)
         for following_index in range(unit_idx, num_units):
@@ -439,8 +477,9 @@ def empty_nth_order_deltas_sampled(
     num_units: int = 64,
     max_depth: int = 1,
     num_samples: int = 4096,
+    seed: int = 44,
 ) -> tuple[NthOrderDelta, list[list[NthOrderDelta]], list[list[NthOrderDelta]]]:
-    root = NthOrderDelta(unit_idx=-1, delta=delta)
+    root = NthOrderDelta(unit_idx=-1, delta=delta, num_units=num_units)
     depth_deltas = [[root]] + [[] for _ in range(max_depth)]
     unit_deltas = [[] for _ in range(num_units)]
     unit_deltas_cumulative = [[root] for _ in range(num_units)]
@@ -460,12 +499,37 @@ def empty_nth_order_deltas_sampled(
     # sample the deltas end to beginning, filling up each order until we hit the target number of samples
     num_samples_by_order = [0] * max_depth
     num_samples_by_order[0] = num_units
+    random.seed(seed)
     for order, num_target_samples in reversed(enumerate(target_samples_by_order)):
         while num_samples_by_order[order] < num_target_samples:
             # sample by going down the tree order times
             current_node = root
-            for depth in range(order):
-                pass
+            for depth in range(1, order + 1):
+                pool_to_pick_from = set(range(current_node.unit_idx + 1, num_units))
+
+                # if we're at the max depth then we must pick a unit that doesn't exist yet, or if a child is saturated we know we cannot go that route
+                banned_pool = set(child.unit_idx for child in current_node.children.values() if child.saturated or depth == order)
+                pool_to_pick_from -= banned_pool
+
+                if not pool_to_pick_from:
+                    raise ValueError("Ran out of units to sample from")
+
+                unit_idx = random.choice(list(pool_to_pick_from))
+
+                if current_node[unit_idx] is None:
+                    current_node[unit_idx] = NthOrderDelta(unit_idx=unit_idx, parent=current_node)
+                    depth_deltas[depth].append(current_node[unit_idx])
+                    unit_deltas[unit_idx].append(current_node[unit_idx])
+                    following_indices = list(range(unit_idx, num_units))  # unit_index, unit_index + 1, ..., num_units - 1
+                    for following_index in following_indices:
+                        unit_deltas_cumulative[following_index].append(current_node[unit_idx])
+
+                    num_samples_by_order[depth] += len(following_indices)
+                    current_node[unit_idx].update_saturated(num_units=num_units)
+
+                current_node = current_node[unit_idx]
+
+    return root, depth_deltas, unit_deltas, unit_deltas_cumulative
 
 def empty_nth_order_deltas_sampled_by_circuit(
     delta: th.Tensor | None = None,
@@ -473,7 +537,7 @@ def empty_nth_order_deltas_sampled_by_circuit(
     max_depth: int = 1,
     num_samples: int = 4096,
 ) -> tuple[NthOrderDelta, list[list[NthOrderDelta]], list[list[NthOrderDelta]]]:
-    root = NthOrderDelta(unit_idx=-1, delta=delta)
+    root = NthOrderDelta(unit_idx=-1, delta=delta, num_units=num_units)
     depth_deltas = [[root]] + [[] for _ in range(max_depth)]
     unit_deltas = [[] for _ in range(num_units)]
     unit_deltas_cumulative = [[root] for _ in range(num_units)]
