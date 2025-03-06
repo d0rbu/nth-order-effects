@@ -21,35 +21,36 @@ class NthOrderDelta:
     unit_idx: int
     delta: th.Tensor | None = None
     parent: "NthOrderDelta | None" = None
-    children: list["NthOrderDelta"] = field(default_factory=list)
+    children: dict[int, "NthOrderDelta"] = field(default_factory=dict)
+    saturated: bool = False
 
     def __getitem__(self, indices: tuple[int] | int) -> "NthOrderDelta":
         if not isinstance(indices, tuple):
             indices = (indices,)
 
         idx, *rest = indices
-        absolute_idx = idx - self.unit_idx - 1
 
-        assert 0 <= absolute_idx < len(self.children), f"Index {idx} out of bounds for unit {self.unit_idx}"
+        relevant_child = self.children.get(idx, None)
 
-        if not rest:
-            return self.children[absolute_idx]
-        else:
-            return self.children[absolute_idx][rest]
+        if not rest or relevant_child is None:
+            return relevant_child
+
+        return relevant_child[rest]
 
     def __setitem__(self, indices: tuple[int] | int, value: "NthOrderDelta") -> None:
         if not isinstance(indices, tuple):
             indices = (indices,)
 
         idx, *rest = indices
-        absolute_idx = idx - self.unit_idx - 1
-
-        assert 0 <= absolute_idx < len(self.children), f"Index {idx} out of bounds for unit {self.unit_idx}"
 
         if not rest:
-            self.children[absolute_idx] = value
-        else:
-            self.children[absolute_idx][rest] = value
+            self.children[idx] = value
+            return
+
+        if idx not in self.children:
+            self.children[idx] = NthOrderDelta(unit_idx=idx)
+
+        self.children[idx][rest] = value
 
     def __repr__(self) -> str:
         if self.delta is None:
@@ -429,7 +430,7 @@ def empty_nth_order_deltas_recursive(
             max_depth=max_depth,
         )
         new_nth_order_delta.parent = nth_order_delta
-        nth_order_delta.children.append(new_nth_order_delta)
+        nth_order_delta.children[new_unit_idx] = new_nth_order_delta
 
     return nth_order_delta, depth_deltas, unit_deltas, unit_deltas_cumulative
 
@@ -447,16 +448,24 @@ def empty_nth_order_deltas_sampled(
     max_by_order = calculate_max_by_order(num_units, max_depth)
 
     # determine how many of each order we should have
-    num_samples_by_order = []
+    target_samples_by_order = []
     num_samples_left = num_samples
     for order, max_samples in enumerate(max_by_order):
         # if we were to divide evenly among the remaining orders
         allotted_samples = num_samples_left // (max_depth - order)
         num_samples = min(allotted_samples, max_samples)
         num_samples_left -= num_samples
-        num_samples_by_order.append(num_samples)
+        target_samples_by_order.append(num_samples)
 
-    # sample the deltas
+    # sample the deltas end to beginning, filling up each order until we hit the target number of samples
+    num_samples_by_order = [0] * max_depth
+    num_samples_by_order[0] = num_units
+    for order, num_target_samples in reversed(enumerate(target_samples_by_order)):
+        while num_samples_by_order[order] < num_target_samples:
+            # sample by going down the tree order times
+            current_node = root
+            for depth in range(order):
+                pass
 
 def empty_nth_order_deltas_sampled_by_circuit(
     delta: th.Tensor | None = None,
@@ -471,7 +480,7 @@ def empty_nth_order_deltas_sampled_by_circuit(
 
     max_by_order = comb(num_units, max_depth)
 
-    # sample the deltas
+    # sample the deltas end to beginning
 
 def calculate_max_by_order(num_units: int, max_depth: int) -> list[int]:
     max_by_order = [0] * max_depth

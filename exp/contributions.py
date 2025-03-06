@@ -105,7 +105,7 @@ def compute_losses(
     delta_loss = loss_fn(output_module(final_state - root.delta.to(final_state.device))).item()
 
     losses = [DeltaLoss(root.unit_indices(), delta_loss)]
-    for child in root.children:
+    for child in root.children.values():
         losses.extend(compute_losses(final_state, child, loss_fn, output_module))
 
     return losses
