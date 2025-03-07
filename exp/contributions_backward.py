@@ -13,7 +13,7 @@ from tqdm import tqdm
 
 from core.data import get_dataset
 from core.model import get_model_and_tokenizer
-from core.nth_order import compute_nth_order_deltas_backward, NthOrderDelta
+from core.nth_order import compute_nth_order_deltas_backward
 from exp.exp_data import DTYPE_MAP, DATA_FILE, METADATA_FILE, BACKWARD_CONTRIBUTIONS_OUT_SUBDIR
 
 
@@ -65,6 +65,9 @@ def main(
     n: int = 3,
     out_dir: str = "out",
     batchsize: int = 0,
+    num_samples: int = 0,
+    seed: int = 44,
+    sample_by_circuit: bool = False,
 ) -> None:
     dataset = get_dataset(dataset_name)
     model_kwargs = {
@@ -75,7 +78,18 @@ def main(
     }
     model, tokenizer, checkpoint = get_model_and_tokenizer(model_name, checkpoint_idx, model_kwargs=model_kwargs)
 
-    deltas, units_deltas, units_deltas_cumulative, inputs, gradients = compute_nth_order_deltas_backward(model, checkpoint, tokenizer, dataset, stop_n=n, max_token_length=maxlen, batchsize=batchsize)
+    deltas, units_deltas, units_deltas_cumulative, inputs, gradients = compute_nth_order_deltas_backward(
+        model,
+        checkpoint,
+        tokenizer,
+        dataset,
+        stop_n=n,
+        max_token_length=maxlen,
+        batchsize=batchsize,
+        num_samples=num_samples,
+        seed=seed,
+        sample_by_circuit=sample_by_circuit,
+    )
 
     del deltas
 
@@ -217,6 +231,10 @@ def main(
             "load_in_4bit": load_in_4bit,
             "n": n,
             "out_dir": out_dir,
+            "batchsize": batchsize,
+            "num_samples": num_samples,
+            "seed": seed,
+            "sample_by_circuit": sample_by_circuit,
         }
 
         yaml.dump(metadata, f)

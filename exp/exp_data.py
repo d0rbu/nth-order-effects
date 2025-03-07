@@ -27,6 +27,10 @@ class ExperimentConfig:
     load_in_8bit: bool
     load_in_4bit: bool
     n: int
+    batchsize: int = 0,
+    num_samples: int = 0,
+    seed: int = 44,
+    sample_by_circuit: bool = False,
 
 
 def get_exp_data(
@@ -63,6 +67,10 @@ def get_exp_data(
                 load_in_8bit=metadata["load_in_8bit"],
                 load_in_4bit=metadata["load_in_4bit"],
                 n=metadata["n"],
+                batchsize=metadata["batchsize"],
+                num_samples=metadata["num_samples"],
+                seed=metadata["seed"],
+                sample_by_circuit=metadata["sample_by_circuit"],
             )
 
             completed_experiments[completed_experiment] = exp_path

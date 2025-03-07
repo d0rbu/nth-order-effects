@@ -29,8 +29,11 @@ def figure_key(
     load_in_4bit: bool,
     n: int,
     measure: Literal["mean", "median"],
+    num_samples: int,
+    seed: int,
+    sample_by_circuit: bool,
 ) -> str:
-    return f"model={model_name},dataset={dataset_name},maxlen={maxlen},dtype={dtype},load_in_8bit={load_in_8bit},load_in_4bit={load_in_4bit},n={n},measure={measure}"
+    return f"model={model_name},dataset={dataset_name},maxlen={maxlen},dtype={dtype},load_in_8bit={load_in_8bit},load_in_4bit={load_in_4bit},n={n},measure={measure},num_samples={num_samples},seed={seed},sample_by_circuit={sample_by_circuit}"
 
 
 @dataclass
@@ -66,6 +69,9 @@ def main(
     n: int = 3,
     out_dir: str = "out",
     measure: str = "all",
+    num_samples: int = 4096,
+    seed: int = 0,
+    sample_by_circuit: bool = False,
 ) -> None:
     if measure == "all":
         measures = ALL_MEASURES
@@ -257,7 +263,7 @@ def main(
             plt.legend()
             plt.title(config.title)
 
-            key = figure_key(model_name, dataset_name, maxlen, dtype, load_in_8bit, load_in_4bit, n, measure)
+            key = figure_key(model_name, dataset_name, maxlen, dtype, load_in_8bit, load_in_4bit, n, measure, num_samples, seed, sample_by_circuit)
             image_dir = os.path.join(FIGURES_DIR, key)
             os.makedirs(image_dir, exist_ok=True)
             plt.savefig(os.path.join(image_dir, f"{stat}.png"))

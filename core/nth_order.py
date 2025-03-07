@@ -23,34 +23,12 @@ class NthOrderDelta:
     delta: th.Tensor | None = None
     parent: "NthOrderDelta | None" = None
     children: dict[int, "NthOrderDelta"] = field(default_factory=dict)
-    num_units: int | None = None
-
-    def __post_init__(self) -> None:
-        if self.parent is not None:
-            if self.num_units is None:
-                self.num_units = self.parent.num_units
-            else:
-                assert self.parent.num_units == self.num_units, "num_units must be the same as the parent's num_units"
-        else:
-            assert self.num_units is not None, "num_units must be provided if there is no parent"
-
-        self.update_saturated()
-
-    @property
-    def saturated(self) -> bool:
-        return self.__saturated
-
-    def is_saturated(self, num_units: int) -> bool:
-        if self.saturated:
-            return True
-
-        if len(self.children) == num_units - self.unit_idx - 1:
-            self.saturated = True
-            return True
 
     def __getitem__(self, indices: tuple[int] | int) -> "NthOrderDelta":
-        if not isinstance(indices, tuple):
+        if isinstance(indices, int):
             indices = (indices,)
+        else:
+            indices = tuple(indices)
 
         idx, *rest = indices
 
@@ -85,7 +63,7 @@ class NthOrderDelta:
         else:
             delta_repr = f"Tensor(shape={self.delta.shape}, dtype={self.delta.dtype})"
 
-        return f"NthOrderDelta(unit_indices={self.unit_indices()}, delta={delta_repr}, num_units={self.num_units})"
+        return f"NthOrderDelta(unit_indices={self.unit_indices()}, delta={delta_repr})"
 
     def unit_indices(self) -> list[int]:
         current_node = self
@@ -96,17 +74,16 @@ class NthOrderDelta:
             current_node = current_node.parent
 
         return tuple(indices)
+    
+    def is_saturated(self, remaining_depth: int, num_units: int) -> bool:
+        if remaining_depth == 0:
+            return True
 
-    def update_saturated(self) -> None:
-        if getattr(self, "__saturated", False):
-            return
+        candidate_units = set(range(self.unit_idx + 1, num_units - remaining_depth + 1))
+        if not candidate_units.issubset(self.children.keys()):
+            return False
 
-        all_possible_children = set(range(self.unit_idx + 1, self.num_units))
-        all_saturated_children = set(child.unit_idx for child in self.children.values() if child.saturated)
-        if all_possible_children.issubset(all_saturated_children):
-            self.saturated = True
-            if self.parent is not None:
-                self.parent.update_saturated()
+        return all(child.is_saturated(remaining_depth - 1, num_units) for child in self.children.values())
 
 def cache_hash(
     args: tuple[SurgicalModel, PreTrainedTokenizerBase, list[str], int, int],
@@ -137,10 +114,15 @@ def compute_nth_order_deltas_backward(
     stop_n: int = 2,
     max_token_length: int = 512,
     batchsize: int = 0,
+    num_samples: int = 0,
+    seed: int = 44,
+    sample_by_circuit: bool = False,
 ) -> tuple[NthOrderDelta, list[list[NthOrderDelta]], list[list[NthOrderDelta]], dict, list[th.Tensor]]:
     """Compute up to the max_nth order deltas for the given model and dataset. This function uses backpropagation to compute the nth order deltas."""
     assert stop_n > 0, "stop_n must be greater than 0"
     assert batchsize <= 0, "batching not implemented yet"
+
+    assert num_samples or not sample_by_circuit, "sample must be provided if sample_by_circuit is True"
 
     # make sure tokenizer has pad token
     if tokenizer.pad_token is None:
@@ -179,7 +161,12 @@ def compute_nth_order_deltas_backward(
     del activations, inputs_embeds
 
     # zeroth_order_delta is the root node, depth_deltas is the deltas in a list ordered by depth, and units_deltas is the deltas in a list ordered by the last unit index
-    zeroth_order_delta, depth_deltas, units_deltas, units_deltas_cumulative = empty_nth_order_deltas_recursive(delta=gradients[-1].cpu(), num_units=num_units, max_depth=stop_n)
+    if not num_samples:
+        zeroth_order_delta, depth_deltas, units_deltas, units_deltas_cumulative = empty_nth_order_deltas_recursive(delta=gradients[-1].cpu(), num_units=num_units, max_depth=stop_n)
+    elif sample_by_circuit:
+        raise NotImplementedError("Sampling by circuit is not yet implemented")
+    else:
+        zeroth_order_delta, depth_deltas, units_deltas, units_deltas_cumulative = empty_nth_order_deltas_sampled(delta=gradients[-1].cpu(), num_units=num_units, max_depth=stop_n, num_samples=num_samples, seed=seed)
 
     total_iterations = sum(len(unit_deltas) for unit_deltas in units_deltas)
 
@@ -436,7 +423,7 @@ def empty_nth_order_deltas_recursive(
         assert unit_deltas_cumulative is None, "unit_deltas_cumulative must be None if depth is 0"
         assert unit_idx == -1, "unit_idx must be -1 if depth is 0"
 
-        nth_order_delta = NthOrderDelta(unit_idx=-1, delta=delta, num_units=num_units)
+        nth_order_delta = NthOrderDelta(unit_idx=-1, delta=delta)
         depth_deltas = [[nth_order_delta]] + [[] for _ in range(max_depth)]
         unit_deltas = [[] for _ in range(num_units)]
         unit_deltas_cumulative = [[nth_order_delta] for _ in range(num_units)]
@@ -447,7 +434,7 @@ def empty_nth_order_deltas_recursive(
         assert unit_deltas_cumulative is not None, "unit_deltas_cumulative must be provided if depth is not 0"
         assert unit_idx > -1, "unit_idx must be non-negative if depth is not 0"
 
-        nth_order_delta = NthOrderDelta(unit_idx=unit_idx, num_units=num_units)
+        nth_order_delta = NthOrderDelta(unit_idx=unit_idx)
         depth_deltas[depth].append(nth_order_delta)
         unit_deltas[unit_idx].append(nth_order_delta)
         for following_index in range(unit_idx, num_units):
@@ -479,7 +466,7 @@ def empty_nth_order_deltas_sampled(
     num_samples: int = 4096,
     seed: int = 44,
 ) -> tuple[NthOrderDelta, list[list[NthOrderDelta]], list[list[NthOrderDelta]]]:
-    root = NthOrderDelta(unit_idx=-1, delta=delta, num_units=num_units)
+    root = NthOrderDelta(unit_idx=-1, delta=delta)
     depth_deltas = [[root]] + [[] for _ in range(max_depth)]
     unit_deltas = [[] for _ in range(num_units)]
     unit_deltas_cumulative = [[root] for _ in range(num_units)]
@@ -487,28 +474,29 @@ def empty_nth_order_deltas_sampled(
     max_by_order = calculate_max_by_order(num_units, max_depth)
 
     # determine how many of each order we should have
-    target_samples_by_order = []
+    target_samples_by_order = [0] * (max_depth + 1)
     num_samples_left = num_samples
     for order, max_samples in enumerate(max_by_order):
         # if we were to divide evenly among the remaining orders
-        allotted_samples = num_samples_left // (max_depth - order)
+        allotted_samples = num_samples_left // (max_depth + 1 - order)
         num_samples = min(allotted_samples, max_samples)
         num_samples_left -= num_samples
         target_samples_by_order.append(num_samples)
 
     # sample the deltas end to beginning, filling up each order until we hit the target number of samples
     num_samples_by_order = [0] * max_depth
-    num_samples_by_order[0] = num_units
+    num_samples_by_order = [num_units] + num_samples_by_order
     random.seed(seed)
-    for order, num_target_samples in reversed(enumerate(target_samples_by_order)):
+    for order, num_target_samples in reversed(list(enumerate(target_samples_by_order))):
         while num_samples_by_order[order] < num_target_samples:
             # sample by going down the tree order times
             current_node = root
             for depth in range(1, order + 1):
-                pool_to_pick_from = set(range(current_node.unit_idx + 1, num_units))
+                remaining_depth = order - depth
+                pool_to_pick_from = set(range(current_node.unit_idx + 1, num_units - remaining_depth))
 
                 # if we're at the max depth then we must pick a unit that doesn't exist yet, or if a child is saturated we know we cannot go that route
-                banned_pool = set(child.unit_idx for child in current_node.children.values() if child.saturated or depth == order)
+                banned_pool = set(child.unit_idx for child in current_node.children.values() if child.is_saturated(remaining_depth, num_units))
                 pool_to_pick_from -= banned_pool
 
                 if not pool_to_pick_from:
@@ -525,7 +513,6 @@ def empty_nth_order_deltas_sampled(
                         unit_deltas_cumulative[following_index].append(current_node[unit_idx])
 
                     num_samples_by_order[depth] += len(following_indices)
-                    current_node[unit_idx].update_saturated(num_units=num_units)
 
                 current_node = current_node[unit_idx]
 
@@ -537,7 +524,7 @@ def empty_nth_order_deltas_sampled_by_circuit(
     max_depth: int = 1,
     num_samples: int = 4096,
 ) -> tuple[NthOrderDelta, list[list[NthOrderDelta]], list[list[NthOrderDelta]]]:
-    root = NthOrderDelta(unit_idx=-1, delta=delta, num_units=num_units)
+    root = NthOrderDelta(unit_idx=-1, delta=delta)
     depth_deltas = [[root]] + [[] for _ in range(max_depth)]
     unit_deltas = [[] for _ in range(num_units)]
     unit_deltas_cumulative = [[root] for _ in range(num_units)]
@@ -547,14 +534,14 @@ def empty_nth_order_deltas_sampled_by_circuit(
     # sample the deltas end to beginning
 
 def calculate_max_by_order(num_units: int, max_depth: int) -> list[int]:
-    max_by_order = [0] * max_depth
+    max_by_order = [0] * (max_depth + 1)
 
-    for order in range(max_depth):
+    for order in range(max_depth + 1):
         if order == 0:
             max_by_order[order] = num_units
             continue
 
-        for circuit_start_idx in range(num_units):
+        for circuit_start_idx in range(num_units - order + 1):
             max_by_order[order] += comb(num_units - circuit_start_idx - 1, order - 1) * (circuit_start_idx + 1)
 
     return max_by_order

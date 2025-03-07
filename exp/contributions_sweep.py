@@ -38,6 +38,10 @@ async def sweep_task(
     n: int,
     out_dir: str,
     sub_dir: str,
+    batchsize: int = 0,
+    num_samples: int = 0,
+    seed: int = 44,
+    sample_by_circuit: bool = False,
 ) -> None:
     num_checkpoints = len(MODELS[model_name].checkpoints)
     max_checkpoint_idx = num_checkpoints - 1
@@ -66,6 +70,10 @@ async def sweep_task(
             load_in_8bit=load_in_8bit,
             load_in_4bit=load_in_4bit,
             n=n,
+            batchsize=batchsize,
+            num_samples=num_samples,
+            seed=seed,
+            sample_by_circuit=sample_by_circuit,
         )
 
         if experiment in completed_experiments:
@@ -84,6 +92,9 @@ async def sweep_task(
             load_in_4bit=load_in_4bit,
             n=n,
             out_dir=out_dir,
+            batchsize=batchsize,
+            num_samples=num_samples,
+            seed=seed,
         )
         th.cuda.empty_cache()
         gc.collect()
@@ -105,6 +116,10 @@ def sweep(
     out_dir: str = "out",
     exp_type: str = "contributions",
     parallel: int = 1,
+    batchsize: int = 0,
+    num_samples: int = 0,
+    seed: int = 44,
+    sample_by_circuit: bool = False,
 ) -> None:
     if (experiment_type := EXPERIMENT_TYPES.get(exp_type, None)) is None:
         raise ValueError(f"Invalid exp_type: {exp_type}")
@@ -139,6 +154,10 @@ def sweep(
                 n,
                 out_dir,
                 experiment_type.sub_dir,
+                batchsize=batchsize,
+                num_samples=num_samples,
+                seed=seed,
+                sample_by_circuit=sample_by_circuit,
             )
         )
 
