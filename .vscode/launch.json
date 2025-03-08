@@ -123,5 +123,27 @@
                 "4096",
             ],
         },
+        {
+            "name": "backward sweep exp medium batched",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "exp.contributions_sweep",
+            "args": [
+                "--exp-type",
+                "contributions_backward",
+                "--model-name",
+                "pythia1.4b",
+                "--dataset-name",
+                "redpajama-pico",
+                "--maxlen",
+                "1024",
+                "--n",
+                "24",
+                "--num-samples",
+                "4096",
+                "--batchsize",
+                "2",
+            ],
+        },
     ]
 }

@@ -70,7 +70,7 @@ def main(
     out_dir: str = "out",
     measure: str = "all",
     num_samples: int = 4096,
-    seed: int = 0,
+    seed: int = 44,
     sample_by_circuit: bool = False,
 ) -> None:
     if measure == "all":
@@ -90,6 +90,9 @@ def main(
         and completed_experiment.maxlen == maxlen
         and completed_experiment.n == n
         and completed_experiment.checkpoint_idx is not None
+        and completed_experiment.num_samples == num_samples
+        and completed_experiment.seed == seed
+        and completed_experiment.sample_by_circuit == sample_by_circuit
     }
     assert len(filtered_experiments) > 0, "No experiments found with the given parameters"
     sorted_experiments = sorted(filtered_experiments.items(), key=lambda x: x[0].checkpoint_idx)

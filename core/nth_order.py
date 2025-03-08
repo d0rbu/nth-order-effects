@@ -1,18 +1,20 @@
-from functools import partial
-from dataclasses import dataclass, field
-from typing import Iterable
-import json
+import gc
 import hashlib
+import json
 import random
+from dataclasses import dataclass, field
+from functools import partial
 from math import comb
+from typing import Iterable
 
 import torch as th
 import torch.nn as nn
-from transformers.tokenization_utils_base import PreTrainedTokenizerBase
-from tqdm import tqdm
 from cachier import cachier
+from tqdm import tqdm
+from transformers.tokenization_utils_base import PreTrainedTokenizerBase
+from more_itertools import batched
 
-from core.model import SurgicalModel, Checkpoint
+from core.model import Checkpoint, SurgicalModel
 from core.surgical_gpt_neox import SurgicalGPTNeoXForCausalLM
 from core.surgical_olmo import SurgicalOlmo2ForCausalLM
 
@@ -120,7 +122,6 @@ def compute_nth_order_deltas_backward(
 ) -> tuple[NthOrderDelta, list[list[NthOrderDelta]], list[list[NthOrderDelta]], dict, list[th.Tensor]]:
     """Compute up to the max_nth order deltas for the given model and dataset. This function uses backpropagation to compute the nth order deltas."""
     assert stop_n > 0, "stop_n must be greater than 0"
-    assert batchsize <= 0, "batching not implemented yet"
 
     assert num_samples or not sample_by_circuit, "sample must be provided if sample_by_circuit is True"
 
@@ -138,56 +139,82 @@ def compute_nth_order_deltas_backward(
 
     num_units = len(model.model.unit_forwards())
 
-    match model:
-        case SurgicalGPTNeoXForCausalLM():
-            activations = model(
-                **inputs,
-                activation_mask=["model_activations.layer_activations.*.output", "loss", "model_activations.residual_base"],
-            )
-            inputs_embeds = activations.model_activations.residual_base
-            layer_activations = [inputs_embeds] + [layer_activation.output for layer_activation in activations.model_activations.layer_activations]
-        case SurgicalOlmo2ForCausalLM():
-            raise NotImplementedError("SurgicalOlmo2ForCausalLM is not yet supported")
+    gradients = [None] * (num_units + 1)
 
-    gradients = [
-        th.autograd.grad(
-            activations.loss,
-            layer_activation,
-            retain_graph=True,
-        )[0]
-        for layer_activation in layer_activations
-    ]
+    zeroth_order_delta, depth_deltas, units_deltas, units_deltas_cumulative = None, None, None, None
 
-    del activations, inputs_embeds
+    # batch each value in the inputs dictionary
+    for batch_indices in tqdm(batched(range(len(dataset)), batchsize), desc="Computing batches", leave=False, total=len(dataset) // batchsize):
+        batch_indices_tensor = th.tensor(batch_indices)
+        batch = {key: value[batch_indices_tensor] for key, value in inputs.items()}
+        current_batchsize = len(batch_indices)
 
-    # zeroth_order_delta is the root node, depth_deltas is the deltas in a list ordered by depth, and units_deltas is the deltas in a list ordered by the last unit index
-    if not num_samples:
-        zeroth_order_delta, depth_deltas, units_deltas, units_deltas_cumulative = empty_nth_order_deltas_recursive(delta=gradients[-1].cpu(), num_units=num_units, max_depth=stop_n)
-    elif sample_by_circuit:
-        raise NotImplementedError("Sampling by circuit is not yet implemented")
-    else:
-        zeroth_order_delta, depth_deltas, units_deltas, units_deltas_cumulative = empty_nth_order_deltas_sampled(delta=gradients[-1].cpu(), num_units=num_units, max_depth=stop_n, num_samples=num_samples, seed=seed)
+        match model:
+            case SurgicalGPTNeoXForCausalLM():
+                activations = model(
+                    **batch,
+                    activation_mask=["model_activations.layer_activations.*.output", "loss", "model_activations.residual_base"],
+                )
+                inputs_embeds = activations.model_activations.residual_base
+                layer_activations = [inputs_embeds] + [layer_activation.output for layer_activation in activations.model_activations.layer_activations]
+            case SurgicalOlmo2ForCausalLM():
+                raise NotImplementedError("SurgicalOlmo2ForCausalLM is not yet supported")
 
-    total_iterations = sum(len(unit_deltas) for unit_deltas in units_deltas)
+        current_gradients = [
+            th.autograd.grad(
+                activations.loss,
+                layer_activation,
+                retain_graph=True,
+            )[0]
+            for layer_activation in layer_activations
+        ]
 
-    with tqdm(total=total_iterations, desc="Computing nth order gradient deltas", leave=False) as progress_bar:
-        for inverse_unit_idx, (unit_deltas, unit, unit_input, unit_output) in enumerate(zip(units_deltas, reversed(model.model.unit_forwards()), reversed(layer_activations[:-1]), reversed(layer_activations[1:]))):
-            unit_output_idx = num_units - inverse_unit_idx
-            for unit_delta in unit_deltas:
-                is_last = unit_delta is unit_deltas[-1]
+        del activations, inputs_embeds
 
-                unit_delta.delta = th.autograd.grad(
-                    unit_output,
-                    unit_input,
-                    grad_outputs=unit_delta.parent.delta.to(model.device),
-                    retain_graph=not is_last,
-                )[0].cpu() - unit_delta.parent.delta
+        # zeroth_order_delta is the root node, depth_deltas is the deltas in a list ordered by depth, and units_deltas is the deltas in a list ordered by the last unit index
+        if zeroth_order_delta is None:
+            if not num_samples:
+                zeroth_order_delta, depth_deltas, units_deltas, units_deltas_cumulative = empty_nth_order_deltas_recursive(delta=current_gradients[-1].cpu(), num_units=num_units, max_depth=stop_n)
+            elif sample_by_circuit:
+                raise NotImplementedError("Sampling by circuit is not yet implemented")
+            else:
+                zeroth_order_delta, depth_deltas, units_deltas, units_deltas_cumulative = empty_nth_order_deltas_sampled(delta=current_gradients[-1].cpu(), num_units=num_units, max_depth=stop_n, num_samples=num_samples, seed=seed)
+        else:
+            zeroth_order_delta.delta = th.cat([zeroth_order_delta.delta, current_gradients[-1].cpu()], dim=0)
 
-                progress_bar.update(1)
+        total_iterations = sum(len(unit_deltas) for unit_deltas in units_deltas)
 
-            layer_activations[unit_output_idx] = None
-            del unit, unit_input, unit_output
-            th.cuda.empty_cache()
+        with tqdm(total=total_iterations, desc="Computing nth order gradient deltas", leave=False) as progress_bar:
+            for inverse_unit_idx, (unit_deltas, unit, unit_input, unit_output) in enumerate(zip(units_deltas, reversed(model.model.unit_forwards()), reversed(layer_activations[:-1]), reversed(layer_activations[1:]))):
+                unit_output_idx = num_units - inverse_unit_idx
+                for unit_delta in unit_deltas:
+                    is_last = unit_delta is unit_deltas[-1]
+
+                    parent_gradient = unit_delta.parent.delta[-current_batchsize:]
+
+                    current_batch_gradient = th.autograd.grad(
+                        unit_output,
+                        unit_input,
+                        grad_outputs=parent_gradient.to(model.device),
+                        retain_graph=True,
+                    )[0].cpu() - parent_gradient
+
+                    if unit_delta.delta is None:
+                        unit_delta.delta = current_batch_gradient
+                    else:
+                        unit_delta.delta = th.cat([unit_delta.delta, current_batch_gradient], dim=0)
+
+                    progress_bar.update(1)
+
+                layer_activations[unit_output_idx] = None
+                del unit, unit_input, unit_output
+                th.cuda.empty_cache()
+
+        for unit_idx, gradient in enumerate(current_gradients):
+            if gradients[unit_idx] is None:
+                gradients[unit_idx] = gradient
+            else:
+                gradients[unit_idx] = th.cat([gradients[unit_idx], gradient], dim=0)
 
     units_deltas = [[zeroth_order_delta]] + units_deltas
     units_deltas_cumulative = [[zeroth_order_delta]] + units_deltas_cumulative
@@ -471,17 +498,19 @@ def empty_nth_order_deltas_sampled(
     unit_deltas = [[] for _ in range(num_units)]
     unit_deltas_cumulative = [[root] for _ in range(num_units)]
 
-    max_by_order = calculate_max_by_order(num_units, max_depth)
+    max_by_order = list(enumerate(calculate_max_by_order(num_units, max_depth)))
 
     # determine how many of each order we should have
     target_samples_by_order = [0] * (max_depth + 1)
     num_samples_left = num_samples
-    for order, max_samples in enumerate(max_by_order):
+    # sort by order so we can fill up the orders from smallest to largest
+    max_by_order = sorted(max_by_order, key=lambda x: x[1])
+    for order_idx, (order, max_samples) in enumerate(max_by_order):
         # if we were to divide evenly among the remaining orders
-        allotted_samples = num_samples_left // (max_depth + 1 - order)
+        allotted_samples = num_samples_left // (max_depth + 1 - order_idx)
         num_samples = min(allotted_samples, max_samples)
         num_samples_left -= num_samples
-        target_samples_by_order.append(num_samples)
+        target_samples_by_order[order] = num_samples
 
     # sample the deltas end to beginning, filling up each order until we hit the target number of samples
     num_samples_by_order = [0] * max_depth
