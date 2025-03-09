@@ -45,6 +45,8 @@ class StatConfig:
 STAT_CONFIGS = {
     "cosine_similarity": StatConfig(name="Cosine similarity", title="avg cosine similarity between nth-order gradient and true gradient"),
     "l2_norm": StatConfig(name="L2 norm", title="avg L2 norm of nth-order gradient"),
+    "l1_norm": StatConfig(name="L1 norm", title="avg L1 norm of nth-order gradient"),
+    "dot_product": StatConfig(name="Dot product", title="avg dot product between nth-order gradient and true gradient"),
     "projected_onto_normalized": StatConfig(name="Projection magnitude", title="avg magnitude of nth-order gradient projected onto true gradient", derived=lambda row: row["cosine_similarity"] * row["l2_norm"]),
 }
 TOP_K_REGEX = re.compile(r"^top(\d+)$")

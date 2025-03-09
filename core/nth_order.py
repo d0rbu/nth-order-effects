@@ -125,6 +125,9 @@ def compute_nth_order_deltas_backward(
 
     assert num_samples or not sample_by_circuit, "sample must be provided if sample_by_circuit is True"
 
+    if batchsize == 0:
+        batchsize = len(dataset)
+
     # make sure tokenizer has pad token
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
