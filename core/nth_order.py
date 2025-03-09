@@ -168,7 +168,7 @@ def compute_nth_order_deltas_backward(
                 activations.loss,
                 layer_activation,
                 retain_graph=True,
-            )[0]
+            )[0].cpu()
             for layer_activation in layer_activations
         ]
 
@@ -177,13 +177,13 @@ def compute_nth_order_deltas_backward(
         # zeroth_order_delta is the root node, depth_deltas is the deltas in a list ordered by depth, and units_deltas is the deltas in a list ordered by the last unit index
         if zeroth_order_delta is None:
             if not num_samples:
-                zeroth_order_delta, depth_deltas, units_deltas, units_deltas_cumulative = empty_nth_order_deltas_recursive(delta=current_gradients[-1].cpu(), num_units=num_units, max_depth=stop_n)
+                zeroth_order_delta, depth_deltas, units_deltas, units_deltas_cumulative = empty_nth_order_deltas_recursive(delta=current_gradients[-1], num_units=num_units, max_depth=stop_n)
             elif sample_by_circuit:
                 raise NotImplementedError("Sampling by circuit is not yet implemented")
             else:
-                zeroth_order_delta, depth_deltas, units_deltas, units_deltas_cumulative = empty_nth_order_deltas_sampled(delta=current_gradients[-1].cpu(), num_units=num_units, max_depth=stop_n, num_samples=num_samples, seed=seed)
+                zeroth_order_delta, depth_deltas, units_deltas, units_deltas_cumulative = empty_nth_order_deltas_sampled(delta=current_gradients[-1], num_units=num_units, max_depth=stop_n, num_samples=num_samples, seed=seed)
         else:
-            zeroth_order_delta.delta = th.cat([zeroth_order_delta.delta, current_gradients[-1].cpu()], dim=0)
+            zeroth_order_delta.delta = th.cat([zeroth_order_delta.delta, current_gradients[-1]], dim=0)
 
         total_iterations = sum(len(unit_deltas) for unit_deltas in units_deltas)
 

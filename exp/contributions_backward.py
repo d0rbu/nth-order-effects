@@ -99,7 +99,7 @@ def main(
     unit_stats = [None for _ in range(num_units)]
     all_stats = []
     for unit_idx, (unit_deltas, raw_unit_gradient) in tqdm(enumerate(zip(reversed(units_deltas_cumulative), gradients)), desc="Computing stats for units", total=num_units, leave=False):
-        unit_gradient = raw_unit_gradient[attention_mask]  # T', D
+        unit_gradient = raw_unit_gradient[attention_mask].to(model.device)  # T', D
         avg_cosine_similarity_by_depth = [set() for _ in range(n + 1)]
         avg_dot_product_by_depth = [set() for _ in range(n + 1)]
         avg_l2_distance_by_depth = [set() for _ in range(n + 1)]

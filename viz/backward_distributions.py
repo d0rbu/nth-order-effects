@@ -11,6 +11,7 @@ from tqdm import tqdm
 from typing import Literal, Callable
 
 from core.model import MODELS
+from core.nth_order import calculate_max_by_order
 from exp.contributions import DATA_FILE
 from exp.exp_data import get_exp_data, BACKWARD_CONTRIBUTIONS_OUT_SUBDIR
 
@@ -51,7 +52,8 @@ STAT_CONFIGS = {
 }
 TOP_K_REGEX = re.compile(r"^top(\d+)$")
 TOP_K_GRADIENT_REGEX = re.compile(r"^top(\d+)_gradient$")
-ALL_MEASURES = ["mean", "mean_normalized", "median", "sum", "sum_normalized", "bounds", "top100", "top3_gradient"]
+# ALL_MEASURES = ["mean", "mean_normalized", "median", "sum", "sum_normalized", "bounds", "top100", "top3_gradient"]
+ALL_MEASURES = ["mean_normalized"]
 
 @dataclass
 class Datapoint:
@@ -73,7 +75,7 @@ def main(
     out_dir: str = "out",
     measure: str = "all",
     filter_orders_up_to: int = 0,
-    num_samples: int = 4096,
+    num_samples: int = 0,
     seed: int = 44,
     sample_by_circuit: bool = False,
     filter_by_unit_index: int | None = None,
@@ -107,11 +109,14 @@ def main(
     all_stat_unit_indices = {stat_name: [[] for _ in range(n + 1)] for stat_name in STAT_CONFIGS.keys()}  # stat, O, T, N
     all_stat_unit_index_locations = {stat_name: [[] for _ in range(n + 1)] for stat_name in STAT_CONFIGS.keys()}  # stat, O, T, N
     exp_paths = []
+    num_units = None
     for experiment, exp_path in tqdm(sorted_experiments, desc="Loading data", total=len(sorted_experiments)):
         exp_paths.append(exp_path)
 
         with open(os.path.join(exp_path, DATA_FILE), "r") as f:
-            data = yaml.safe_load(f)["all_stats"]
+            raw_data = yaml.safe_load(f)
+            data = raw_data["all_stats"]
+            num_units = len(raw_data["unit_stats"]) - 1
 
         for stat, config in STAT_CONFIGS.items():
             checkpoint_nth_order_distribution = [[] for _ in range(n + 1)]  # O, N
@@ -167,6 +172,8 @@ def main(
                     plt.plot(steps, mean_value, label=f"Order {order}", color=colors[order])
             elif measure == "mean_normalized":
                 mean_values = th.tensor([[checkpoint_values.mean().item() for checkpoint_values in order_values] for order_values in stat_distribution])  # O, T
+                effect_multiplicities = th.tensor(calculate_max_by_order(num_units, n)).unsqueeze(-1)  # O, 1
+                mean_values = mean_values * effect_multiplicities
                 total = mean_values.sum(dim=0)
                 cumsum = th.zeros_like(mean_values[0])
                 for order, mean_value in enumerate(mean_values):
