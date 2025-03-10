@@ -14,19 +14,20 @@ DATA_FILE = "data.yaml"
 METADATA_FILE = "metadata.yaml"
 CONTRIBUTIONS_OUT_SUBDIR = "contributions"
 BACKWARD_CONTRIBUTIONS_OUT_SUBDIR = "backward_contributions"
+GRADIENT_SCALING_OUT_SUBDIR = "gradient_scaling"
 
 
 @dataclass(frozen=True)
 class ExperimentConfig:
     model_name: str
     dataset_name: str
-    checkpoint_idx: int | None
-    maxlen: int
-    device: str
-    dtype: str
-    load_in_8bit: bool
-    load_in_4bit: bool
-    n: int
+    checkpoint_idx: int | None = None
+    maxlen: int = 2048
+    device: str = "cuda"
+    dtype: str = "fp32"
+    load_in_8bit: bool = False
+    load_in_4bit: bool = False
+    n: int = 0
     batchsize: int = 0,
     num_samples: int = 0,
     seed: int = 44,
@@ -60,17 +61,17 @@ def get_exp_data(
             completed_experiment = ExperimentConfig(
                 model_name=metadata["model"],
                 dataset_name=metadata["dataset"],
-                checkpoint_idx=metadata["checkpoint_idx"],
-                maxlen=metadata["maxlen"],
-                device=metadata["device"],
-                dtype=metadata["dtype"],
-                load_in_8bit=metadata["load_in_8bit"],
-                load_in_4bit=metadata["load_in_4bit"],
-                n=metadata["n"],
-                batchsize=metadata["batchsize"],
-                num_samples=metadata["num_samples"],
-                seed=metadata["seed"],
-                sample_by_circuit=metadata["sample_by_circuit"],
+                checkpoint_idx=metadata.get("checkpoint_idx", None),
+                maxlen=metadata.get("maxlen", 2048),
+                device=metadata.get("device", "cuda"),
+                dtype=metadata.get("dtype", "fp32"),
+                load_in_8bit=metadata.get("load_in_8bit", False),
+                load_in_4bit=metadata.get("load_in_4bit", False),
+                n=metadata.get("n", 0),
+                batchsize=metadata.get("batchsize", 0),
+                num_samples=metadata.get("num_samples", 0),
+                seed=metadata.get("seed", 44),
+                sample_by_circuit=metadata.get("sample_by_circuit", False),
             )
 
             completed_experiments[completed_experiment] = exp_path

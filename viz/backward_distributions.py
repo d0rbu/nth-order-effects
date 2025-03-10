@@ -53,7 +53,7 @@ STAT_CONFIGS = {
 TOP_K_REGEX = re.compile(r"^top(\d+)$")
 TOP_K_GRADIENT_REGEX = re.compile(r"^top(\d+)_gradient$")
 # ALL_MEASURES = ["mean", "mean_normalized", "median", "sum", "sum_normalized", "bounds", "top100", "top3_gradient"]
-ALL_MEASURES = ["mean_normalized"]
+ALL_MEASURES = ["mean_normalized", "mean_normalized_unscaled"]
 
 @dataclass
 class Datapoint:
@@ -167,14 +167,24 @@ def main(
 
         for measure in measures:
             if measure == "mean":
-                mean_values = [[checkpoint_values.mean().item() for checkpoint_values in order_values] for order_values in stat_distribution]
+                mean_values = [[checkpoint_values.mean().item() for checkpoint_values in order_values] for order_values in stat_distribution]  # O, T
                 for order, mean_value in enumerate(mean_values):
                     plt.plot(steps, mean_value, label=f"Order {order}", color=colors[order])
             elif measure == "mean_normalized":
                 mean_values = th.tensor([[checkpoint_values.mean().item() for checkpoint_values in order_values] for order_values in stat_distribution])  # O, T
                 effect_multiplicities = th.tensor(calculate_max_by_order(num_units, n)).unsqueeze(-1)  # O, 1
                 mean_values = mean_values * effect_multiplicities
-                total = mean_values.sum(dim=0)
+                total = mean_values.nan_to_num().sum(dim=0)  # replace nans with 0 so that the sum doesn't become nan if there are nans
+                cumsum = th.zeros_like(mean_values[0])
+                for order, mean_value in enumerate(mean_values):
+                    normalized_mean_value = mean_value / total
+                    new_cumsum = cumsum + normalized_mean_value
+                    plt.plot(steps, new_cumsum, label=f"Order {order}", color=colors[order])
+                    plt.fill_between(steps, cumsum, new_cumsum, alpha=0.2, color=colors[order])
+                    cumsum = new_cumsum
+            elif measure == "mean_normalized_unscaled":
+                mean_values = th.tensor([[checkpoint_values.mean().item() for checkpoint_values in order_values] for order_values in stat_distribution])  # O, T
+                total = mean_values.nan_to_num().sum(dim=0)
                 cumsum = th.zeros_like(mean_values[0])
                 for order, mean_value in enumerate(mean_values):
                     normalized_mean_value = mean_value / total

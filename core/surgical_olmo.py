@@ -326,6 +326,7 @@ class SurgicalOlmo2DecoderLayer(Olmo2DecoderLayer):
         attention_normed_output = self.post_attention_layernorm(attention_activations.output)
 
         residual += attention_normed_output
+        attention_unit_output = residual
         activation_mask_for_mlp = [".".join(activation_path.split(".")[1:]) for activation_path in activation_mask if activation_path.startswith("mlp_activations.")]
 
         mlp_output = self.mlp(
@@ -344,6 +345,7 @@ class SurgicalOlmo2DecoderLayer(Olmo2DecoderLayer):
         activations = DecoderLayerActivations(
             attention_activations=attention_activations,
             attention_normed_output=attention_normed_output,
+            attention_output=attention_unit_output,
             mlp_activations=mlp_activations,
             mlp_normed_output=mlp_normed_output,
             output=residual,
