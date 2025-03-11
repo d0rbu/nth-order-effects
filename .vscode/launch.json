@@ -145,5 +145,19 @@
                 "2",
             ],
         },
+        {
+            "name": "gradient viz",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "viz.gradient_scaling_distributions",
+            "args": [
+                "--model-name",
+                "pythia70m",
+                "--dataset-name",
+                "redpajama-tiny",
+                "--maxlen",
+                "2048",
+            ],
+        },
     ]
 }

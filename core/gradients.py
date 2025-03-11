@@ -74,7 +74,7 @@ def compute_gradients(
                 activations.loss,
                 unit_activation,
                 retain_graph=True,
-            )[0].cpu()
+            )[0].cpu()[:, :-1]  # the last gradient is nothing because to compute the loss we shift the labels by 1
             for unit_activation in unit_activations
         ]
 

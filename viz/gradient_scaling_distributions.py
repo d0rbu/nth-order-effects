@@ -73,6 +73,11 @@ def main(
             all_distributions[unit_idx].append(unit_data)
     all_distributions = th.tensor(all_distributions)  # U, T, N
 
+    num_units, num_timesteps, _ = all_distributions.shape
+
+    nan_mask = th.isnan(all_distributions)  # to clear the pesky nans from loss being shifted by 1
+    all_distributions = all_distributions[nan_mask].view(num_units, num_timesteps, -1)
+
     assert (model_config := MODELS.get(model_name, None)), f"Model {model_name} not found"
 
     steps = [model_config.checkpoints[experiment[0].checkpoint_idx].step for experiment in sorted_experiments]
@@ -85,18 +90,22 @@ def main(
                 plt.plot(steps, mean_value, label=f"Unit {unit_idx}", color=colors[unit_idx])
         elif measure == "median":
             bounds = th.tensor([0.25, 0.5, 0.75])
-            # U, T, N -> U, T, 3
+            # U, T, N -> 3, U, T
             unit_bounds = th.quantile(all_distributions, bounds, dim=-1)
+            # 3, U, T -> U, 3, T
+            unit_bounds = unit_bounds.permute(1, 0, 2)
             for unit_idx, timeseries_bounds in enumerate(unit_bounds):
-                plt.plot(steps, timeseries_bounds[:, 1], label=f"Unit {unit_idx}", color=colors[unit_idx])
-                plt.fill_between(steps, timeseries_bounds[:, 0], timeseries_bounds[:, 2], alpha=0.2, color=colors[unit_idx])
+                plt.plot(steps, timeseries_bounds[1], label=f"Unit {unit_idx}", color=colors[unit_idx])
+                plt.fill_between(steps, timeseries_bounds[0], timeseries_bounds[2], alpha=0.2, color=colors[unit_idx])
         elif measure == "bounds":
             bounds = th.tensor([0.0, 0.5, 1.0])
-            # U, T, N -> U, T, 3
+            # U, T, N -> 3, U, T
             unit_bounds = th.quantile(all_distributions, bounds, dim=-1)
+            # 3, U, T -> U, 3, T
+            unit_bounds = unit_bounds.permute(1, 0, 2)
             for unit_idx, timeseries_bounds in enumerate(unit_bounds):
-                plt.plot(steps, timeseries_bounds[:, 1], label=f"Unit {unit_idx}", color=colors[unit_idx])
-                plt.fill_between(steps, timeseries_bounds[:, 0], timeseries_bounds[:, 2], alpha=0.2, color=colors[unit_idx])
+                plt.plot(steps, timeseries_bounds[1], label=f"Unit {unit_idx}", color=colors[unit_idx])
+                plt.fill_between(steps, timeseries_bounds[0], timeseries_bounds[2], alpha=0.2, color=colors[unit_idx])
         else:
             raise ValueError(f"Unknown measure {measure}")
 
@@ -105,7 +114,7 @@ def main(
         plt.legend()
         plt.title("Gradient scaling factor by unit")
 
-        key = figure_key(model_name, dataset_name, maxlen, dtype, load_in_8bit, load_in_4bit, measure)
+        key = figure_key(model_name, dataset_name, maxlen, dtype, load_in_8bit, load_in_4bit)
         image_dir = os.path.join(FIGURES_DIR, key)
         os.makedirs(image_dir, exist_ok=True)
 
