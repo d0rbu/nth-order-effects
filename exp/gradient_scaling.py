@@ -35,12 +35,12 @@ def main(
 
     gradients, attention_mask = compute_gradients(model, checkpoint, tokenizer, dataset, max_token_length=maxlen, batchsize=batchsize)
     gradient_scaling_factors = []  # U, N
-    for input_gradient, output_gradient in tqdm(zip(gradients[:-1], gradients[1:]), desc="Computing gradient scaling factors", total=len(gradients) - 1, leave=False):
-        unit_gradient = input_gradient - output_gradient  # B, T, D
+    for output_gradient, input_gradient in tqdm(zip(gradients[:-1], gradients[1:]), desc="Computing gradient scaling factors", total=len(gradients) - 1, leave=False):
+        unit_gradient = output_gradient - input_gradient  # B, T, D
         unit_gradient_norm = th.linalg.norm(unit_gradient, dim=-1)  # B, T
-        output_gradient_norm = th.linalg.norm(output_gradient, dim=-1)  # B, T
+        input_gradient_norm = th.linalg.norm(input_gradient, dim=-1)  # B, T
 
-        unit_gradient_scaling_factors = unit_gradient_norm / output_gradient_norm  # B, T
+        unit_gradient_scaling_factors = unit_gradient_norm / input_gradient_norm  # B, T
         gradient_scaling_factors.append(unit_gradient_scaling_factors[attention_mask].tolist())
 
     final_data = gradient_scaling_factors

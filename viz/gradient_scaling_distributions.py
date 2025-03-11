@@ -76,7 +76,7 @@ def main(
     num_units, num_timesteps, _ = all_distributions.shape
 
     nan_mask = th.isnan(all_distributions)  # to clear the pesky nans from loss being shifted by 1
-    all_distributions = all_distributions[nan_mask].view(num_units, num_timesteps, -1)
+    all_distributions = all_distributions[~nan_mask].view(num_units, num_timesteps, -1)
 
     assert (model_config := MODELS.get(model_name, None)), f"Model {model_name} not found"
 
@@ -117,6 +117,10 @@ def main(
         key = figure_key(model_name, dataset_name, maxlen, dtype, load_in_8bit, load_in_4bit)
         image_dir = os.path.join(FIGURES_DIR, key)
         os.makedirs(image_dir, exist_ok=True)
+
+        # make the plot 4096x4096 pixels
+        fig = plt.gcf()
+        fig.set_size_inches(4096 / fig.dpi, 4096 / fig.dpi)
 
         if take_all_measures:
             plt.savefig(os.path.join(image_dir, f"{measure}.png"))
