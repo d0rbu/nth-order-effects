@@ -1,6 +1,7 @@
 import itertools
 from typing import Callable
 
+from tqdm import tqdm
 import torch as th
 import torch.nn as nn
 from transformers.models.gpt_neox.modeling_gpt_neox import (
@@ -481,7 +482,7 @@ class SurgicalGPTNeoXModel(SurgicalGPTNeoXPreTrainedModel, GPTNeoXModel):
         layer_activations = []
 
         # decoder layers
-        for layer_idx, decoder_layer in enumerate(self.layers[: self.config.num_hidden_layers]):
+        for layer_idx, decoder_layer in tqdm(enumerate(self.layers[: self.config.num_hidden_layers]), total=self.config.num_hidden_layers, leave=False):
             if isinstance(activation_mask, bool):
                 activation_mask_for_layer = activation_mask
             else:

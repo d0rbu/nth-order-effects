@@ -52,7 +52,6 @@ async def sweep_task(
             dtype=dtype,
             load_in_8bit=load_in_8bit,
             load_in_4bit=load_in_4bit,
-            batchsize=batchsize,
         )
 
         if experiment in completed_experiments:

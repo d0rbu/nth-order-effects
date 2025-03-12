@@ -1,6 +1,7 @@
 import itertools
 from typing import Callable
 
+from tqdm import tqdm
 import torch as th
 import torch.nn as nn
 from transformers.models.olmo2.modeling_olmo2 import (
@@ -453,7 +454,7 @@ class SurgicalOlmo2Model(SurgicalOlmo2PreTrainedModel, Olmo2Model):
         layer_activations = []
 
         # decoder layers
-        for layer_idx, decoder_layer in enumerate(self.layers[: self.config.num_hidden_layers]):
+        for layer_idx, decoder_layer in tqdm(enumerate(self.layers[: self.config.num_hidden_layers]), total=self.config.num_hidden_layers, leave=False):
             activation_mask_for_layer = [
                 ".".join(activation_path.split(".")[2:]) for activation_path in activation_mask
                 if activation_path.startswith(f"layer_activations.{layer_idx}.") or activation_path.startswith("layer_activations.*.")

@@ -1,6 +1,6 @@
 import os
 import yaml
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import torch as th
 
@@ -10,7 +10,7 @@ DTYPE_MAP = {
     "fp32": th.float32,
     "fp16": th.float16,
 }
-DATA_FILE = "data.yaml"
+DATA_FILE = "data.pt"
 METADATA_FILE = "metadata.yaml"
 CONTRIBUTIONS_OUT_SUBDIR = "contributions"
 BACKWARD_CONTRIBUTIONS_OUT_SUBDIR = "backward_contributions"
@@ -28,10 +28,10 @@ class ExperimentConfig:
     load_in_8bit: bool = False
     load_in_4bit: bool = False
     n: int = 0
-    batchsize: int = 0,
-    num_samples: int = 0,
-    seed: int = 44,
-    sample_by_circuit: bool = False,
+    batchsize: int = field(default=0, compare=False)
+    num_samples: int = field(default=0)
+    seed: int = field(default=44)
+    sample_by_circuit: bool = field(default=False)
 
 
 def get_exp_data(
@@ -68,7 +68,7 @@ def get_exp_data(
                 load_in_8bit=metadata.get("load_in_8bit", False),
                 load_in_4bit=metadata.get("load_in_4bit", False),
                 n=metadata.get("n", 0),
-                batchsize=metadata.get("batchsize", 0),
+                batchsize=0,
                 num_samples=metadata.get("num_samples", 0),
                 seed=metadata.get("seed", 44),
                 sample_by_circuit=metadata.get("sample_by_circuit", False),

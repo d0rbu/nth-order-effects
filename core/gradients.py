@@ -74,8 +74,8 @@ def compute_gradients(
                 activations.loss,
                 unit_activation,
                 retain_graph=True,
-            )[0].cpu()[:, :-1]  # the last gradient is nothing because to compute the loss we shift the labels by 1
-            for unit_activation in unit_activations
+            )[0].cpu()
+            for unit_activation in tqdm(unit_activations, desc="Computing gradients", total=len(unit_activations), leave=False)
         ]
 
         for unit_idx, gradient in enumerate(current_gradients):

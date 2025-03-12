@@ -4,6 +4,7 @@ import time
 
 import arguably
 import torch as th
+import torch.nn as nn
 from tqdm import tqdm
 
 from core.data import get_dataset
@@ -34,6 +35,12 @@ def main(
     model, tokenizer, checkpoint = get_model_and_tokenizer(model_name, checkpoint_idx, model_kwargs=model_kwargs)
 
     gradients, attention_mask = compute_gradients(model, checkpoint, tokenizer, dataset, max_token_length=maxlen, batchsize=batchsize)
+    # attention_mask is B, T. for each batch, we need to set the last 1 to 0 because of the shifted loss function
+    attention_mask_padded = nn.functional.pad(attention_mask, (0, 1), value=1)  # B, T+1
+    # first we find the only 1 followed by a 0
+    end_of_sequence_mask = ~attention_mask_padded[:, 1:] & attention_mask_padded[:, :-1]  # B, T
+    # then we set the last 1 to 0
+    attention_mask[end_of_sequence_mask] = False
     gradient_scaling_factors = []  # U, N
     for output_gradient, input_gradient in tqdm(zip(gradients[:-1], gradients[1:]), desc="Computing gradient scaling factors", total=len(gradients) - 1, leave=False):
         unit_gradient = output_gradient - input_gradient  # B, T, D
@@ -41,9 +48,9 @@ def main(
         input_gradient_norm = th.linalg.norm(input_gradient, dim=-1)  # B, T
 
         unit_gradient_scaling_factors = unit_gradient_norm / input_gradient_norm  # B, T
-        gradient_scaling_factors.append(unit_gradient_scaling_factors[attention_mask].tolist())
+        gradient_scaling_factors.append(unit_gradient_scaling_factors[attention_mask])
 
-    final_data = gradient_scaling_factors
+    final_data = th.stack(gradient_scaling_factors, dim=0).cpu()  # U, N
 
     out_timestamp_dir = str(int(time.time() * 1000))
     final_out_dir = os.path.join(out_dir, GRADIENT_SCALING_OUT_SUBDIR, out_timestamp_dir)
@@ -52,8 +59,7 @@ def main(
     metadata_out_filepath = os.path.join(final_out_dir, METADATA_FILE)
 
     os.makedirs(final_out_dir, exist_ok=True)
-    with open(out_filepath, "w") as f:
-        yaml.dump(final_data, f)
+    th.save(final_data, out_filepath)
 
     with open(metadata_out_filepath, "w") as f:
         metadata = {
@@ -74,7 +80,6 @@ def main(
             "load_in_8bit": load_in_8bit,
             "load_in_4bit": load_in_4bit,
             "out_dir": out_dir,
-            "batchsize": batchsize,
         }
 
         yaml.dump(metadata, f)
