@@ -26,7 +26,7 @@ DATASETS = {
         selection=range(0, 64 * 7, 64)
     ),
     "redpajama-1": DatasetConfig(
-        selection=[139]  # https://www.sensory.com/category/security/biometrics-security/
+        selection=[139]  # selection comes from https://www.sensory.com/category/security/biometrics-security/
     ),
 }
 

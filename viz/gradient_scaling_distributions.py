@@ -12,7 +12,7 @@ from exp.exp_data import get_exp_data, GRADIENT_SCALING_OUT_SUBDIR
 
 FIGURES_DIR = "figures_gradient_scaling"
 COLORMAP = plt.get_cmap("viridis")
-ALL_MEASURES = ["mean", "median", "bounds"]
+ALL_MEASURES = ["mean", "median", "median_no_bounds", "bounds"]
 
 
 def figure_key(
@@ -89,6 +89,15 @@ def main(
             for unit_idx, timeseries_bounds in enumerate(unit_bounds):
                 plt.plot(steps, timeseries_bounds[1], label=f"Unit {unit_idx}", color=colors[unit_idx])
                 plt.fill_between(steps, timeseries_bounds[0], timeseries_bounds[2], alpha=0.2, color=colors[unit_idx])
+        elif measure == "median_no_bounds":
+            bounds = th.tensor([0.5])
+            # U, T, N -> 1, U, T
+            unit_bounds = th.quantile(all_distributions, bounds, dim=-1)
+            # 1, U, T -> U, T
+            unit_bounds = unit_bounds.squeeze(0)
+            max_value = unit_bounds.max()
+            for unit_idx, timeseries_bounds in enumerate(unit_bounds):
+                plt.plot(steps, timeseries_bounds, label=f"Unit {unit_idx}", color=colors[unit_idx])
         elif measure == "bounds":
             bounds = th.tensor([0.0, 0.5, 1.0])
             # U, T, N -> 3, U, T
