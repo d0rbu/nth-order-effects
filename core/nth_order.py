@@ -161,7 +161,22 @@ def compute_nth_order_deltas_backward(
                 inputs_embeds = activations.model_activations.residual_base
                 layer_activations = [inputs_embeds] + [layer_activation.output for layer_activation in activations.model_activations.layer_activations]
             case SurgicalOlmo2ForCausalLM():
-                raise NotImplementedError("SurgicalOlmo2ForCausalLM is not yet supported")
+                activations = model(
+                    **batch,
+                    activation_mask=[
+                        "model_activations.layer_activations.*.attention_normed_output",
+                        "model_activations.layer_activations.*.mlp_normed_output",
+                        "loss",
+                        "model_activations.residual_base"
+                    ],
+                )
+                inputs_embeds = activations.model_activations.residual_base  # B, T, D
+                layer_activations = [
+                    [layer_activation.attention_normed_output, layer_activation.mlp_normed_output]
+                    for layer_activation in activations.model_activations.layer_activations
+                ]
+                # flatten so we have alternating attention output, mlp output, attention output, mlp output, ...
+                layer_activations = [inputs_embeds] + [activation for layer_activation in layer_activations for activation in layer_activation]
 
         current_gradients = [
             th.autograd.grad(

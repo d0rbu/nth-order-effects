@@ -63,7 +63,7 @@ def compute_gradients(
                 )
                 inputs_embeds = activations.model_activations.residual_base
                 layer_activations = [
-                    [layer_activation.attention_output, layer_activation.output]
+                    [layer_activation.attention_normed_output, layer_activation.mlp_normed_output]
                     for layer_activation in activations.model_activations.layer_activations
                 ]
                 # flatten so we have alternating attention output, mlp output, attention output, mlp output, ...

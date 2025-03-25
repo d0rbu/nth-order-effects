@@ -310,11 +310,11 @@ class SurgicalOlmo2DecoderLayer(Olmo2DecoderLayer):
         position_embeddings: th.FloatTensor | None = None,
         activation_mask: bool | list[str] = ["output"],
     ) -> DecoderLayerActivations:
-        residual = hidden_states
+        residual = hidden_states.clone()
         activation_mask_for_attention = [".".join(activation_path.split(".")[1:]) for activation_path in activation_mask if activation_path.startswith("attention_activations.")]
 
         attention_output = self.self_attn(
-            hidden_states=residual,
+            hidden_states=residual.clone(),
             position_embeddings=position_embeddings,
             attention_mask=attention_mask,
             activation_mask=activation_mask_for_attention,
@@ -331,7 +331,7 @@ class SurgicalOlmo2DecoderLayer(Olmo2DecoderLayer):
         activation_mask_for_mlp = [".".join(activation_path.split(".")[1:]) for activation_path in activation_mask if activation_path.startswith("mlp_activations.")]
 
         mlp_output = self.mlp(
-            residual,
+            residual.clone(),
             activation_mask=activation_mask_for_mlp,
         )
         if isinstance(mlp_output, MLPActivations):
@@ -361,7 +361,7 @@ class SurgicalOlmo2DecoderLayer(Olmo2DecoderLayer):
         attention_mask: th.BoolTensor | None = None,
         position_embeddings: th.FloatTensor | None = None,
     ) -> th.FloatTensor:
-        residual = hidden_states
+        residual = hidden_states.clone()
 
         attention_output = self.self_attn(
             hidden_states=residual,

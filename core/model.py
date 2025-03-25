@@ -25,7 +25,11 @@ class Checkpoint:
         return self.model_config.revision_format.format(self.step, self.num_tokens)
 
     def load_model(self, model_kwargs: dict[str, Any]) -> PreTrainedModel:
-        return AutoModelForCausalLM.from_pretrained(self.model_config.hf_name, revision=str(self), **model_kwargs)
+        print("Loading model", self)
+        model = AutoModelForCausalLM.from_pretrained(self.model_config.hf_name, revision=str(self), **model_kwargs)
+        print("Model loaded")
+
+        return model
 
 @dataclass
 class ModelConfig:
@@ -64,7 +68,7 @@ MODELS = {
     "olmo2": ModelConfig(
         hf_name="allenai/OLMo-2-1124-7B",
         branch_regex=re.compile(r"stage1-step(\d+)-tokens(\d+)B"),
-        revision_format="step{}-tokens{}B",
+        revision_format="stage1-step{}-tokens{}B",
         surgical_class=SurgicalOlmo2ForCausalLM,
     ),
     "pythia14m": ModelConfig(
