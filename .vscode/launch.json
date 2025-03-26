@@ -190,11 +190,13 @@
             "module": "viz.gradient_scaling_distributions",
             "args": [
                 "--model-name",
-                "pythia70m",
+                "olmo2",
                 "--dataset-name",
-                "redpajama-tiny",
+                "redpajama-1",
                 "--maxlen",
-                "2048",
+                "512",
+                "--dtype",
+                "bf16"
             ],
         },
     ]

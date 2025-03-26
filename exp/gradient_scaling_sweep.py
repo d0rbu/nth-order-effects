@@ -6,8 +6,8 @@ import asyncio
 import torch as th
 
 from core.model import MODELS
-from exp.gradient import main as gradient_main
-from exp.exp_data import get_exp_data, ExperimentConfig, GRADIENT_OUT_SUBDIR
+from exp.gradient_scaling import main as gradient_scaling_main
+from exp.exp_data import get_exp_data, ExperimentConfig, GRADIENT_SCALING_OUT_SUBDIR
 
 
 async def sweep_task(
@@ -91,7 +91,7 @@ def sweep(
     parallel: int = 1,
     batchsize: int = 0,
 ) -> None:
-    completed_experiments = set(get_exp_data(out_dir, GRADIENT_OUT_SUBDIR).keys())
+    completed_experiments = set(get_exp_data(out_dir, GRADIENT_SCALING_OUT_SUBDIR).keys())
 
     print("Experiment config:")
     print(f"    model_name: {model_name}")
@@ -106,7 +106,7 @@ def sweep(
     for rank in range(world_size):
         asyncio.run(
             sweep_task(
-                gradient_main,
+                gradient_scaling_main,
                 completed_experiments,
                 rank,
                 world_size,
@@ -118,7 +118,7 @@ def sweep(
                 load_in_8bit,
                 load_in_4bit,
                 out_dir,
-                GRADIENT_OUT_SUBDIR,
+                GRADIENT_SCALING_OUT_SUBDIR,
                 batchsize=batchsize,
             )
         )

@@ -7,12 +7,11 @@ from tqdm import tqdm
 
 from core.model import MODELS
 from exp.contributions import DATA_FILE
-from exp.exp_data import get_exp_data, GRADIENT_SCALING_OUT_SUBDIR
+from exp.exp_data import get_exp_data, GRADIENT_OUT_SUBDIR
 
 
-FIGURES_DIR = "figures_gradient_scaling"
+FIGURES_DIR = "figures_gradient"
 COLORMAP = plt.get_cmap("viridis")
-ALL_MEASURES = ["mean", "median", "median_no_bounds", "bounds"]
 
 
 def figure_key(
@@ -36,12 +35,8 @@ def main(
     load_in_8bit: bool = False,
     load_in_4bit: bool = False,
     out_dir: str = "out",
-    measure: str = "all",
 ) -> None:
-    take_all_measures = measure == "all"
-    measures = ALL_MEASURES if take_all_measures else [measure]
-
-    completed_experiments = get_exp_data(out_dir, GRADIENT_SCALING_OUT_SUBDIR)
+    completed_experiments = get_exp_data(out_dir, GRADIENT_OUT_SUBDIR)
     filtered_experiments = {
         completed_experiment: exp_path
         for completed_experiment, exp_path in completed_experiments.items()
@@ -56,12 +51,8 @@ def main(
     assert len(filtered_experiments) > 0, "No experiments found with the given parameters"
     sorted_experiments = sorted(filtered_experiments.items(), key=lambda x: x[0].checkpoint_idx)
 
-    all_distributions = []  # T, U, N
-    for experiment, exp_path in tqdm(sorted_experiments, desc="Loading data", total=len(sorted_experiments), leave=False):
-        data_path = os.path.join(exp_path, DATA_FILE)
-        data = th.load(data_path).float()  # U, N
-        all_distributions.append(data)
-    all_distributions = th.stack(all_distributions, dim=0).permute(1, 0, 2)  # U, T, N
+    all_distributions = []  # T', U, B, T, D
+    # TODO: come up with visualization for gradients
 
     num_units, num_timesteps, _ = all_distributions.shape
 

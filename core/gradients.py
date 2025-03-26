@@ -35,7 +35,7 @@ def compute_gradients(
 
     num_units = len(model.model.unit_forwards())
 
-    gradients = [None] * (num_units + 1)
+    gradients = [None] * (num_units + 1)  # U + 1, B, T, D
 
     # batch each value in the inputs dictionary
     for batch_indices in tqdm(batched(range(len(dataset)), batchsize), desc="Computing batches", leave=False, total=len(dataset) // batchsize):

@@ -15,6 +15,7 @@ METADATA_FILE = "metadata.yaml"
 CONTRIBUTIONS_OUT_SUBDIR = "contributions"
 BACKWARD_CONTRIBUTIONS_OUT_SUBDIR = "backward_contributions"
 GRADIENT_SCALING_OUT_SUBDIR = "gradient_scaling"
+GRADIENT_OUT_SUBDIR = "gradient"
 
 
 @dataclass(frozen=True)
