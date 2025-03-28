@@ -51,7 +51,7 @@ def main(
     metadata_out_filepath = os.path.join(final_out_dir, METADATA_FILE)
 
     os.makedirs(final_out_dir, exist_ok=True)
-    th.save(gradients, out_filepath)
+    th.save({"gradients": gradients, "attention_mask": attention_mask}, out_filepath)
 
     with open(metadata_out_filepath, "w") as f:
         metadata = {
