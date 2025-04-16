@@ -72,7 +72,7 @@ def main(
     out_filepath = os.path.join(out_dir, f"{json_key(model_name, dataset_name, maxlen, dtype, load_in_8bit, load_in_4bit)}.json")
 
     gradients_list = [None for _ in range(all_distributions.shape[0])]
-    for batch_idx, (sample_gradients, sample_mask) in enumerate(zip(all_distributions, attention_mask)):
+    for batch_idx, (sample_gradients, sample_mask) in tqdm(enumerate(zip(all_distributions, attention_mask)), desc="Processing gradients", total=all_distributions.shape[0], leave=False):
         sequence_length = sample_mask.sum().item()
         gradients_list[batch_idx] = sample_gradients[:sequence_length].tolist()
 
@@ -83,7 +83,7 @@ def main(
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    tokenized_dataset = [tokenizer.tokenize(text, truncation=True, max_length=maxlen) for text in dataset]
+    tokenized_dataset = [tokenizer.tokenize(text, truncation=True, max_length=maxlen) for text in tqdm(dataset, desc="Tokenizing dataset", leave=False)]
 
     out = {
         "model_name": model_name,
