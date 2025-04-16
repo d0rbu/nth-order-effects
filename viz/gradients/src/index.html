@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <script src="distill.bundle.js" type="module" fetchpriority="high" blocking></script>
+    <script src="main.bundle.js" type="module" fetchpriority="low" defer></script>
+    <script src="https://cdn.plot.ly/plotly-3.0.0.min.js" charset="utf-8"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta charset="utf8">
+    <base target="_blank">
+    <title>The Distill Blog Template</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <d-front-matter>
+        <script id='distill-front-matter' type="text/json">{
+    "title": "The Distill Blog Template",
+    "description": "Building beautiful blog posts.",
+    "published": "Feb 19, 2025",
+    "affiliation": {"name": "YourCompany"},
+    "authors": [
+      {
+        "author":"The Author (you!)",
+        "authorURL":"https://huggingface.co/"
+      }
+    ],
+    "katex": {
+      "delimiters": [
+        {"left": "$$", "right": "$$", "display": false}
+      ]
+    }
+  }
+    </script>
+    </d-front-matter>
+    <d-title>
+        <h1 class="l-page" style="text-align: center;">The Distill Template:<br>Craft Beautiful Blogs</h1>
+        <div id="title-plot" class="main-plot-container l-screen" style="overflow-x: hidden; width: 100%; text-align: center;">
+            <div style="display: flex; justify-content: center; position: relative;">
+                {{{fragment-banner}}}
+            </div>
+            <p style="text-align: cekter; font-style: italic; margin-top: 10px; max-width: 900px; margin-left: auto; margin-right: auto;">It's nice to have a cute interactive banner!</p>
+  
+        </div>
+    </d-title>
+    <d-byline></d-byline>
+      <d-article>
+        <d-contents>
+        </d-contents>
+        
+        <p>Welcome to the Distill Blog Template! This framework is based on the <a href="https://distill.pub/">distill.pub</a> design and has been adapted to make it easy for you to create beautiful, interactive technical blogs. Whether you're writing about machine learning, data science, physics, or any technical topic, this template provides the structure and components you need.</p>
+    
+        <aside>Reading time: 10-15 minutes.</aside>
+    
+        <p>This template includes support for mathematics, interactive visualizations, citations, footnotes, and more. In this guide, we'll walk you through the structure of the template and how to customize it for your own blog.</p>
+        
+        <aside>If you have questions or remarks open a discussion on the <a href="https://huggingface.co/spaces/lvwerra/distill-blog-template/discussions?status=open&type=discussion">Community tab</a>!</aside>
+        
+        <p>The template is built with the following features in mind:</p>
+
+        <p><strong>1. Beautiful typography and layout</strong>: The template follows Distill's clean, readable design principles with responsive layouts that work well on desktop and mobile.</p>
+
+        <p><strong>2. Support for interactive components</strong>: You can include interactive visualizations, like the memory widget shown below:</p>
+
+        <h2>Getting Started with the Template</h2>
+
+        <p>Let's walk through how to use this template to create your own blog:</p>
+
+        <h3>Installation and Setup</h3>
+
+        <p>First, duplicate the repository and clone it to your local machine and install the dependencies:</p>
+
+
+        <d-code block language="bash">
+            git clone https://huggingface.co/spaces/lvwerra/distill-blog-template
+            cd distill-blog-template
+            npm install
+        </d-code>
+
+        <p>To run the development server:</p>
+
+        <d-code block language="bash">
+            npm run dev
+        </d-code>
+
+        <p>This will start a local server at <code> http://localhost:8080 </code> where you can preview your blog as you edit it.</p>
+
+        <h3>Editing the Front Matter</h3>
+
+        <p>The front matter contains metadata about your blog post, such as the title, description, and author information. Edit the <code>&lt;d-front-matter&gt;</code> section at the top of <code>src/index.html</code>:</p>
+
+        <d-code block language="html">&lt;d-front-matter&gt;
+    &lt;script id='distill-front-matter' type="text/json"&gt;{
+    "title": "Your Blog Title",
+    "description": "A brief description of your blog",
+    "published": "Month Day, Year",
+    "affiliation": {"name": "Your Organization"},
+    "authors": [
+      {
+        "author":"Your Name",
+        "authorURL":"https://your-website.com"
+      }
+    ],
+    "katex": {
+      "delimiters": [
+        {"left": "$$", "right": "$$", "display": false}
+      ]
+    }
+  }
+    &lt;/script&gt;
+&lt;/d-front-matter&gt;</d-code>
+
+        <p>An the corresponding entries in <code>src/distill.js</code> in the <code>bylineTemplate</code>.</p>
+
+        <h3>Writing Your Content</h3>
+
+        <p>Your main content goes within the <code>&lt;d-article&gt;</code> tags. You can use standard HTML tags with some special Distill components:</p>
+
+        <h4>Mathematical Equations</h4>
+
+        <p>You can include inline math using <code>&lt;d-math&gt;x^2 + y^2 = z^2&lt;/d-math&gt;</code> which renders as <d-math>x^2 + y^2 = z^2</d-math>.</p>
+
+        <p>For block equations, use <code>&lt;d-math block&gt;E = mc^2&lt;/d-math&gt;</code>:</p>
+
+        <d-math block>E = mc^2</d-math>
+
+        <h4>Code</h4>
+
+        <p>It's great to include code samples in your blog post. In-line you can do it via the <code>&lt;code&gt;</code> tags. For code blocks you can use the <code>&lt;d-code block language="clike"&gt;</d-code></code> tags. Take the for example the following block:</p>
+
+        <d-code block language="html">
+            &lt;d-code block language="python"&gt;
+                def print_hello_world():
+                    print("hello world")
+            &lt;/d-code&gt;
+        </d-code>
+
+        <p>It will render as:</p>
+        
+        <d-code block language="python">
+            def print_hello_world():
+                print("hello world")
+        </d-code>
+
+        <p>Finally, if you want to include code from GitHub you can use <a href="www.emgithub.com">emgithub.com</a> and for example create a collapsable widget like this:</p>
+
+        <d-code block language="html">
+            &lt;details style="background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 6px; margin: 1em 0;"&gt;
+                &lt;summary style="padding: 12px; cursor: pointer; user-select: none; background: #f3f4f6; border-bottom: 1px solid #d0d7de;"&gt;
+                    👉 Naive DP implementation with overlap in Picotron (Click to expand)
+                &lt;/summary&gt;
+                    &lt;div class="code-embed-container" style="margin: 0; border-radius: 0; overflow-x: scroll; width: max-content; min-width: 100%; font-size: 8px;"&gt;&lt;/div&gt;
+                        &lt;script 
+                            src="https://emgithub.com/embed-v2.js?target=https%3A%2F%2Fgithub.com%2Fhuggingface%2Fpicotron%2Fblob%2F0035cce0e04afd6192763b11efe50010d8ad0f71%2Fpicotron%2Fdata_parallel%2Fdata_parallel.py%23L10-L60&style=github&type=code&showBorder=off&showLineNumbers=on&showFileMeta=on&showCopy=on&showFullPath=on"&gt;
+                        &lt;/script&gt;
+                    &lt;/div&gt;
+            &lt;/details&gt;
+        </d-code>
+
+        <p>Which will display as follows:</p>
+
+        <details style="background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 6px; margin: 1em 0;">
+            <summary style="padding: 12px; cursor: pointer; user-select: none; background: #f3f4f6; border-bottom: 1px solid #d0d7de;">
+                👉 Naive DP implementation with overlap in Picotron (Click to expand)
+            </summary>
+                <div class="code-embed-container" style="margin: 0; border-radius: 0; overflow-x: scroll; width: max-content; min-width: 100%; font-size: 8px;"></div>
+                    <script 
+                        src="https://emgithub.com/embed-v2.js?target=https%3A%2F%2Fgithub.com%2Fhuggingface%2Fpicotron%2Fblob%2F0035cce0e04afd6192763b11efe50010d8ad0f71%2Fpicotron%2Fdata_parallel%2Fdata_parallel.py%23L10-L60&style=github&type=code&showBorder=off&showLineNumbers=on&showFileMeta=on&showCopy=on&showFullPath=on">
+                    </script>
+                </div>
+        </details>
+
+
+        <h4>Asides</h4>
+
+        <p>You can include side notes using the <code>&lt;aside&gt;...&lt;/aside&gt;</code> tag:</p>
+
+        <aside>This is a side note that will appear in the margin.</aside>
+
+        <h4>Figures and Images</h4>
+
+        <p>Include figures with captions:</p>
+
+        <d-code block language="html">
+            &lt;figure&gt;
+                &lt;img src="/assets/images/placeholder.png" alt="A placeholder image"&gt;
+                &lt;figcaption&gt;Caption for your figure&lt;/figcaption&gt;
+            &lt;/figure&gt;
+        </d-code>
+
+        <p>This will show the following:</p>
+
+        <figure>
+            <img src="/assets/images/placeholder.png" alt="A placeholder image">
+            <figcaption>Caption for your figure</figcaption>
+        </figure>
+
+        <h4>Tables</h4>
+        
+        <p>You can easily add tables with the default HTML formatting:</p>
+
+        <d-code block language="html">
+            &lt;table&gt;
+                &lt;thead&gt;
+                    &lt;tr&gt;
+                        &lt;th&gt;&lt;strong&gt;Model&lt;/strong&gt;&lt;/th&gt;
+                        &lt;th&gt;&lt;strong&gt;Accuracy&lt;/strong&gt;&lt;/th&gt;
+                        &lt;th&gt;&lt;strong&gt;Speed&lt;/strong&gt;&lt;/th&gt;
+                    &lt;/tr&gt;
+                &lt;/thead&gt;
+                &lt;tbody&gt;
+                    &lt;tr&gt;
+                        &lt;td&gt;Model A&lt;/td&gt;
+                        &lt;td&gt;95%&lt;/td&gt;
+                        &lt;td&gt;Fast&lt;/td&gt;
+                    &lt;/tr&gt;
+                    &lt;tr&gt;
+                        &lt;td&gt;Model B&lt;/td&gt;
+                        &lt;td&gt;98%&lt;/td&gt;
+                        &lt;td&gt;Medium&lt;/td&gt;
+                    &lt;/tr&gt;
+                    &lt;tr&gt;
+                        &lt;td&gt;Model C&lt;/td&gt;
+                        &lt;td&gt;99%&lt;/td&gt;
+                        &lt;td&gt;Slow&lt;/td&gt;
+                    &lt;/tr&gt;
+                &lt;/tbody&gt;
+            &lt;/table&gt;
+        </d-code>
+        
+        <p>This will render as a table as expected:</p>
+
+        <table>
+            <thead>
+                <tr>
+                    <th><strong>Model</strong></th>
+                    <th><strong>Accuracy</strong></th>
+                    <th><strong>Speed</strong></th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Model A</td>
+                    <td>95%</td>
+                    <td>Fast</td>
+                </tr>
+                <tr>
+                    <td>Model B</td>
+                    <td>98%</td>
+                    <td>Medium</td>
+                </tr>
+                <tr>
+                    <td>Model C</td>
+                    <td>99%</td>
+                    <td>Slow</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h4>Citations</h4>
+
+        <p>Citations can be included using <code>&lt;d-cite bibtex-key="example2023"&gt;&lt;/d-cite&gt;</code> tags and a separate bibliography file:</p>
+
+        <p>As shown in the paper<d-cite bibtex-key="example2023"></d-cite>, this approach has several advantages.</p>
+
+        <h3>Building and Deploying</h3>
+
+        <p>When you're ready to build your blog for production:</p>
+
+        <pre><code>npm run build</code></pre>
+
+        <p>This will create optimized files in the <code>dist/</code> directory. You can then commit and push the changes back to the space and see the result.</p>
+
+        <h2>Interactive Components</h2>
+
+        <p>You can for example include interactive Plotly visualizations in your blog by creating HTML fragments:</p>
+
+        <p>To generate these charts, run the included Python script:</p>
+        
+        <d-code block language="bash">
+            pip install numpy plotly pandas
+            python plotly_example.py
+        </d-code>
+        
+        <p>This creates HTML fragments in the <code>src/fragments/</code> directory that you can include in your blog using the <code>id</code> attribute matching the fragment name.</p>
+
+        <h3>Using HTML Fragments</h3>
+
+        <p>This template supports HTML fragments, which are useful for including complex visualizations or interactive components:</p>
+
+        <ol>
+            <li>Create a new HTML file in the <code>src/fragments/</code> directory, e.g., <code>src/fragments/my-visualization.html</code></li>
+            <li>Include it in your main document using <code>\{{{fragment-my-visualization}}}</code></li>
+        </ol>
+
+        <p>Fragments can contain HTML, CSS, and JavaScript. They're loaded asynchronously, which helps keep your main document lightweight.</p>
+
+
+        <h2>Advanced Customization</h2>
+
+        <h3>Styling</h3>
+
+        <p>You can customize the appearance of your blog by editing <code>src/style.css</code>. The template uses CSS variables for colors, fonts, and spacing, making it easy to adjust the overall look and feel.</p>
+
+        <h3>Adding JavaScript</h3>
+
+        <p>For interactive components, add your JavaScript code to <code>src/index.js</code> or create new modules and import them. The template uses webpack to bundle JavaScript files.</p>
+
+        <h3>Bibliography</h3>
+
+        <p>Edit <code>src/bibliography.bib</code> to include your citations in BibTeX format.</p>
+
+        <h2>Best Practices</h2>
+
+        <ul>
+            <li>Keep your content focused and concise</li>
+            <li>Use visualizations to explain complex concepts</li>
+            <li>Break down long articles into clear sections with descriptive headings</li>
+            <li>Use mathematics sparingly and always explain the notation</li>
+            <li>Optimize images and interactive components for fast loading</li>
+        </ul>
+
+        <h2>Conclusion</h2>
+
+        <p>This template gives you everything you need to create beautiful, interactive technical blogs. By combining clear writing with interactive visualizations and mathematical notation, you can effectively communicate complex ideas to your audience.</p>
+
+        <p>For more examples and inspiration, visit <a href="https://distill.pub/">distill.pub</a>.</p>
+
+
+        
+    </d-article>
+
+    <d-appendix>
+        <d-bibliography src="bibliography.bib"></d-bibliography>
+        <style>
+            d-appendix .citation {
+                font-size: 11px;
+                line-height: 15px;
+                border-left: 1px solid rgba(0, 0, 0, 0.1);
+                padding-left: 18px;
+                border: 1px solid rgba(0, 0, 0, 0.1);
+                background: rgba(0, 0, 0, 0.02);
+                padding: 10px 18px;
+                border-radius: 3px;
+                color: rgba(150, 150, 150, 1);
+                overflow: hidden;
+                margin-top: -12px;
+                white-space: pre-wrap;
+                word-wrap: break-word;
+            }
+        </style>
+
+        <h3 id="citation">Citation</h3>
+        <p>For attribution in academic contexts, please cite this work as</p>
+        <pre
+            class="citation short">"The Distill Blog Template", 2025.</pre>
+        <p>BibTeX citation</p>
+        <pre class="citation long">@misc{distill_blog_template,
+      title={The Distill Blog Template},
+      author={Some Authors et al},
+      year={2025},
+}</pre>
+    </d-appendix>
+    <script>
+      function toggleTOC() {
+          const content = document.querySelector('.toc-content');
+          const icon = document.querySelector('.toggle-icon');
+          
+          content.classList.toggle('collapsed');
+          icon.classList.toggle('collapsed');
+      }
+    </script>
+
+    <script>
+        const article = document.querySelector('d-article');
+        const toc = document.querySelector('d-contents');
+        if (toc) {
+            const headings = article.querySelectorAll('h2, h3, h4');
+            // let ToC = `<nav role="navigation" class="l-text figcaption"><h3>Table of contents</h3>`;
+            let ToC = `<nav role="navigation" class="l-text figcaption"><div class="toc-header" onclick="toggleTOC()">
+            <span class="toc-title">Table of Contents</span>
+            <span class="toggle-icon">▼</span>
+            </div><div class="toc-content">`;
+            let prevLevel = 0;
+
+            for (const el of headings) {
+                // should element be included in TOC?
+                const isInTitle = el.parentElement.tagName == 'D-TITLE';
+                const isException = el.getAttribute('no-toc');
+                if (isInTitle || isException) continue;
+                el.setAttribute('id', el.textContent.toLowerCase().replaceAll(" ", "_"))
+                const link = '<a target="_self" href="' + '#' + el.getAttribute('id') + '">' + el.textContent + '</a>';
+
+                const level = el.tagName === 'H2' ? 0 : (el.tagName === 'H3' ? 1 : 2);
+                while (prevLevel < level) {
+                    ToC += '<ul>'
+                    prevLevel++;
+                }
+                while (prevLevel > level) {
+                    ToC += '</ul>'
+                    prevLevel--;
+                }
+                if (level === 0)
+                    ToC += '<div>' + link + '</div>';
+                else
+                // else if (level === 1)
+                    ToC += '<li>' + link + '</li>';
+            }
+
+            while (prevLevel > 0) {
+                ToC += '</ul>'
+                prevLevel--;
+            }
+            ToC += '</div></nav>';
+            toc.innerHTML = ToC;
+            toc.setAttribute('prerendered', 'true');
+            const toc_links = document.querySelectorAll('d-contents > nav div a');
+
+            window.addEventListener('scroll', (_event) => {
+                if (typeof (headings) != 'undefined' && headings != null && typeof (toc_links) != 'undefined' && toc_links != null) {
+                    find_active: {
+                        for (let i = headings.length - 1; i >= 0; i--) {
+                            const heading = headings[i];
+                            // Skip headings that shouldn't be in TOC
+                            if (heading.parentElement.tagName == 'D-TITLE' || heading.getAttribute('no-toc')) {
+                                continue;
+                            }
+                            
+                            if (heading.getBoundingClientRect().top - 50 <= 0) {
+                                // Find matching TOC link by href
+                                const headingId = heading.getAttribute('id');
+                                const activeLink = Array.from(toc_links).find(link => 
+                                    link.getAttribute('href') === '#' + headingId
+                                );
+                                
+                                if (activeLink && !activeLink.classList.contains("active")) {
+                                    toc_links.forEach(link => link.classList.remove("active"));
+                                    activeLink.classList.add('active');
+                                }
+                                break find_active;
+                            }
+                        }
+                        toc_links.forEach(link => link.classList.remove("active"));
+                    }
+                }
+            });
+        }
+    </script>
+
+</body>
+
+</html>

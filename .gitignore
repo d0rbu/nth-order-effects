@@ -176,3 +176,5 @@ out
 figures
 figures_backward
 figures_gradient_scaling
+
+node_modules

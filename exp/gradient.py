@@ -35,6 +35,7 @@ def main(
     model, tokenizer, checkpoint = get_model_and_tokenizer(model_name, checkpoint_idx, model_kwargs=model_kwargs)
 
     gradients, attention_mask = compute_gradients(model, checkpoint, tokenizer, dataset, max_token_length=maxlen, batchsize=batchsize)
+    gradients = th.stack(gradients)  # U, B, T, D
     # attention_mask is B, T. for each batch, we need to set the last 1 to 0 because of the shifted loss function
     attention_mask_padded = nn.functional.pad(attention_mask, (0, 1), value=1)  # B, T+1
     # first we find the only 1 followed by a 0
