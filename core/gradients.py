@@ -80,8 +80,10 @@ def compute_gradients(
 
         for unit_idx, gradient in enumerate(current_gradients):
             if gradients[unit_idx] is None:
-                gradients[unit_idx] = gradient
+                gradients[unit_idx] = [gradient]
             else:
-                gradients[unit_idx] = th.cat([gradients[unit_idx], gradient], dim=0)
+                gradients[unit_idx].append(gradient)
+
+    gradients = [th.cat(gradients_unit, dim=0) for gradients_unit in gradients]
 
     return gradients, inputs["attention_mask"]
