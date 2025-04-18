@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 from datasets import load_dataset
 from typing import Iterable
+from typing import Callable
 from itertools import chain
 
 
@@ -10,7 +11,7 @@ class DatasetConfig:
     name: str = "ivanzhouyq/RedPajama-Tiny"
     split: str = "train"
     content_key: str = "text"
-    selection: Iterable[int] | None = None
+    selection: Callable[[], Iterable[int]] | None = None
 
 
 DATASETS = {
@@ -18,15 +19,15 @@ DATASETS = {
     "redpajama-nano": DatasetConfig(
         # gets the first 2 samples from each source
         # 0, 1, 64, 65, 128, 129...
-        selection=chain(*[range(source_idx * 64, source_idx * 64 + 2) for source_idx in range(7)])
+        selection=lambda: chain(*[range(source_idx * 64, source_idx * 64 + 2) for source_idx in range(7)])
     ),
     "redpajama-pico": DatasetConfig(
         # gets the first sample from each source
         # 0, 64, 128...
-        selection=range(0, 64 * 7, 64)
+        selection=lambda: range(0, 64 * 7, 64)
     ),
     "redpajama-1": DatasetConfig(
-        selection=[139]  # selection comes from https://www.sensory.com/category/security/biometrics-security/
+        selection=lambda: [139]  # selection comes from https://www.sensory.com/category/security/biometrics-security/
     ),
 }
 
@@ -39,6 +40,6 @@ def get_dataset(name: str) -> list[str]:
     dataset = load_dataset(config.name, split=config.split)
 
     if config.selection is not None:
-        dataset = dataset.select(config.selection)
+        dataset = dataset.select(config.selection())
 
     return dataset[config.content_key]

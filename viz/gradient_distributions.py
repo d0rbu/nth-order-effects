@@ -28,7 +28,7 @@ def json_key(
 @arguably.command
 def main(
     *args,
-    model_name: str = "pythia410m",
+    model_name: str = "olmo2",
     dataset_name: str = "redpajama-1",
     maxlen: int = 256,
     dtype: str = "fp32",

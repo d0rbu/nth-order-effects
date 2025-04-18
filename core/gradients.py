@@ -17,6 +17,7 @@ def compute_gradients(
     batchsize: int = 0,
 ) -> tuple[list[th.Tensor], th.Tensor]:
     """Compute the gradients at each layer of the model for the given dataset."""
+    assert len(dataset) > 0, "Dataset is empty"
 
     if batchsize == 0:
         batchsize = len(dataset)
@@ -84,6 +85,6 @@ def compute_gradients(
             else:
                 gradients[unit_idx].append(gradient)
 
-    gradients = [th.cat(gradients_unit, dim=0) for gradients_unit in gradients]
+    gradients = [th.cat(gradients_unit, dim=0) for gradients_unit in tqdm(gradients, desc="Concatenating gradients", total=len(gradients), leave=False)]
 
     return gradients, inputs["attention_mask"]
