@@ -34,8 +34,13 @@ def main(
     }
     model, tokenizer, checkpoint = get_model_and_tokenizer(model_name, checkpoint_idx, model_kwargs=model_kwargs)
 
+    print("Computing gradients")
     gradients, attention_mask = compute_gradients(model, checkpoint, tokenizer, dataset, max_token_length=maxlen, batchsize=batchsize)
+    # clear previous print
+    print("\033[F\033[K", end="")
+    print("Stacking gradients")
     gradients = th.stack(gradients)  # U, B, T, D
+    print("\033[F\033[K", end="")
     # attention_mask is B, T. for each batch, we need to set the last 1 to 0 because of the shifted loss function
     attention_mask_padded = nn.functional.pad(attention_mask, (0, 1), value=1)  # B, T+1
     # first we find the only 1 followed by a 0
@@ -43,7 +48,9 @@ def main(
     # then we set the last 1 to 0
     attention_mask[end_of_sequence_mask] = False
     # get specific gradient output of each unit
-    gradients[:-1] = gradients[:-1] - gradients[1:]
+    for i, next_gradient in enumerate(gradients[1:]):
+        # subtract the next gradient from the previous gradient
+        gradients[i] -= next_gradient
 
     out_timestamp_dir = str(int(time.time() * 1000))
     final_out_dir = os.path.join(out_dir, GRADIENT_OUT_SUBDIR, out_timestamp_dir)
@@ -52,10 +59,10 @@ def main(
     metadata_out_filepath = os.path.join(final_out_dir, METADATA_FILE)
 
     os.makedirs(final_out_dir, exist_ok=True)
-    print(f"Saving gradients to {out_filepath}")
+    print(f"Writing gradients to {out_filepath}")
     th.save({"gradients": gradients, "attention_mask": attention_mask}, out_filepath)
 
-    print(f"Saving metadata to {metadata_out_filepath}")
+    print(f"Writing metadata to {metadata_out_filepath}")
     with open(metadata_out_filepath, "w") as f:
         metadata = {
             "model": model_name,

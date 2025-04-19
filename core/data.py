@@ -16,6 +16,10 @@ class DatasetConfig:
 
 DATASETS = {
     "redpajama-tiny": DatasetConfig(),
+    "redpajama-micro": DatasetConfig(
+        # gets the first 16 samples from each source
+        selection=lambda: chain(*[range(source_idx * 64, source_idx * 64 + 16) for source_idx in range(7)])
+    ),
     "redpajama-nano": DatasetConfig(
         # gets the first 2 samples from each source
         # 0, 1, 64, 65, 128, 129...

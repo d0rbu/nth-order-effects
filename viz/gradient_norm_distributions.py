@@ -51,19 +51,20 @@ def main(
     assert len(filtered_experiments) > 0, "No experiments found with the given parameters"
     sorted_experiments = sorted(filtered_experiments.items(), key=lambda x: x[0].checkpoint_idx)
 
-    all_gradients = []  # B, T, U, T', D
+    all_gradients = []  # T', B, T, U
     attention_mask = None  # B, T
     for experiment, exp_path in tqdm(sorted_experiments, desc="Loading data", total=len(sorted_experiments), leave=False):
         data_path = os.path.join(exp_path, DATA_FILE)
-        data = th.load(data_path).float()
-        gradients = data["gradients"]  # U, B, T, D
+        data = th.load(data_path)
+        # get norm
+        gradients = th.linalg.vector_norm(data["gradients"], dim=-1)  # U, B, T
         attention_mask = data["attention_mask"]  # B, T
 
-        gradients = gradients.permute(1, 2, 0, 3)  # B, T, U, D
+        gradients = gradients.permute(1, 2, 0)  # B, T, U
 
         all_gradients.append(gradients)
 
-    all_distributions = th.stack(all_gradients, dim=3)  # B, T, U, T', D
+    all_distributions = th.stack(all_gradients, dim=3)  # B, T, U, T'
 
     # for this case, visualization means exporting to json so we can see it in the frontend
     out_dir = os.path.join(out_dir, JSON_DIR)
