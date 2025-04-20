@@ -51,6 +51,7 @@ def main(
     assert len(filtered_experiments) > 0, "No experiments found with the given parameters"
     sorted_experiments = sorted(filtered_experiments.items(), key=lambda x: x[0].checkpoint_idx)
 
+    checkpoint_steps = [experiment.checkpoint_step for experiment, _ in sorted_experiments]
     all_gradients = []  # T', B, T, U
     attention_mask = None  # B, T
     for experiment, exp_path in tqdm(sorted_experiments, desc="Loading data", total=len(sorted_experiments), leave=False):
@@ -94,6 +95,7 @@ def main(
         "load_in_8bit": load_in_8bit,
         "load_in_4bit": load_in_4bit,
         "gradients": gradients_list,
+        "checkpoint_steps": checkpoint_steps,
         "dataset": dataset,
         "tokenized_dataset": tokenized_dataset,
     }

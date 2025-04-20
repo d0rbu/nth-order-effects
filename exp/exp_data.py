@@ -23,6 +23,7 @@ class ExperimentConfig:
     model_name: str
     dataset_name: str
     checkpoint_idx: int | None = None
+    checkpoint_step: int | None = None
     maxlen: int = 2048
     device: str = "cuda"
     dtype: str = "fp32"
@@ -59,10 +60,15 @@ def get_exp_data(
             if not metadata:
                 continue
 
+            checkpoint_metadata = metadata.get("checkpoint_metadata", {})
+            if not checkpoint_metadata:
+                continue
+
             completed_experiment = ExperimentConfig(
                 model_name=metadata["model"],
                 dataset_name=metadata["dataset"],
                 checkpoint_idx=metadata.get("checkpoint_idx", None),
+                checkpoint_step=checkpoint_metadata.get("step", None),
                 maxlen=metadata.get("maxlen", 2048),
                 device=metadata.get("device", "cuda"),
                 dtype=metadata.get("dtype", "fp32"),
