@@ -16,6 +16,7 @@ CONTRIBUTIONS_OUT_SUBDIR = "contributions"
 BACKWARD_CONTRIBUTIONS_OUT_SUBDIR = "backward_contributions"
 GRADIENT_SCALING_OUT_SUBDIR = "gradient_scaling"
 GRADIENT_OUT_SUBDIR = "gradient"
+PRUNED_OUT_SUBDIR = "pruned"
 
 
 @dataclass(frozen=True)
