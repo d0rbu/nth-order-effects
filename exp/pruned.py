@@ -55,24 +55,71 @@ def main(
     pruned_data = {}
 
     print("Getting perplexity on training set")
-    for block_idx, block in enumerate(model.model.layers):
-        for unit_name in ordered_model_units:
-            assert hasattr(block, unit_name), f"Model {model_name} block {block_idx} does not have unit {unit_name}"
-            unit = ModelUnit(
-                block_idx=block_idx,
-                unit_name=unit_name,
-            )
+    # prepare inputs for perplexity evaluation
+    encoded = tokenizer(dataset, return_tensors="pt", padding=True, truncation=True, max_length=maxlen)
+    input_ids = encoded["input_ids"].to(device)
+    attention_mask = encoded["attention_mask"].bool().to(device)
+    labels = th.full_like(input_ids, -100)
+    labels[attention_mask] = input_ids[attention_mask]
+    dataset_size = input_ids.size(0)
+    eval_batchsize = batchsize if batchsize > 0 else dataset_size
+    with th.no_grad():
+        for block_idx, block in enumerate(model.model.layers):
+            for unit_name in ordered_model_units:
+                assert hasattr(block, unit_name), f"Model {model_name} block {block_idx} does not have unit {unit_name}"
+                unit = ModelUnit(
+                    block_idx=block_idx,
+                    unit_name=unit_name,
+                )
 
-            unprune = prune_model(
-                model,
-                units_to_remove=unit,
-            )
+                unprune = prune_model(
+                    model,
+                    units_to_remove=unit,
+                )
 
-            # TODO: get perplexity on validation set and write to pruned_data
+                # compute perplexity on pruned model and record
+                losses = []
+                for batch_input_ids, batch_attention_mask, batch_labels in zip(
+                    input_ids.split(eval_batchsize),
+                    attention_mask.split(eval_batchsize),
+                    labels.split(eval_batchsize),
+                ):
+                    loss = model(
+                        input_ids=batch_input_ids,
+                        attention_mask=batch_attention_mask,
+                        labels=batch_labels,
+                        track_activations=False,
+                    )
+                    losses.append(loss.cpu())
 
-            unprune()
+                mean_loss = th.stack(losses).mean()
+                pruned_ppl = float(th.exp(mean_loss))
+                pruned_data[unit.key()] = Datapoint(perplexity=pruned_ppl)
+                unprune()
     
-    # TODO: get perplexity on full model and write final_data
+    # compute perplexity on full model and assemble final_data
+    with th.no_grad():
+        losses = []
+        for batch_input_ids, batch_attention_mask, batch_labels in zip(
+            input_ids.split(eval_batchsize),
+            attention_mask.split(eval_batchsize),
+            labels.split(eval_batchsize),
+        ):
+            loss = model(
+                input_ids=batch_input_ids,
+                attention_mask=batch_attention_mask,
+                labels=batch_labels,
+                track_activations=False,
+            )
+            losses.append(loss.cpu())
+
+        mean_loss = th.stack(losses).mean()
+        base_ppl = float(th.exp(mean_loss))
+
+    final_data = PrunedDatapoints(
+        base_model=Datapoint(perplexity=base_ppl),
+        pruned_models=pruned_data,
+    )
 
     out_timestamp_dir = str(int(time.time() * 1000))
     final_out_dir = os.path.join(out_dir, PRUNED_OUT_SUBDIR, out_timestamp_dir)
