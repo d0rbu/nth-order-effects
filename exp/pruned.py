@@ -64,8 +64,8 @@ def main(
     dataset_size = input_ids.size(0)
     eval_batchsize = batchsize if batchsize > 0 else dataset_size
     with th.no_grad():
-        for block_idx, block in enumerate(model.model.layers):
-            for unit_name in ordered_model_units:
+        for block_idx, block in tqdm(enumerate(model.model.layers), total=len(model.model.layers), desc="Blocks", leave=False):
+            for unit_name in tqdm(ordered_model_units, total=len(ordered_model_units), desc="Units", leave=False):
                 assert hasattr(block, unit_name), f"Model {model_name} block {block_idx} does not have unit {unit_name}"
                 unit = ModelUnit(
                     block_idx=block_idx,
@@ -79,11 +79,11 @@ def main(
 
                 # compute perplexity on pruned model and record
                 losses = []
-                for batch_input_ids, batch_attention_mask, batch_labels in zip(
+                for batch_input_ids, batch_attention_mask, batch_labels in tqdm(zip(
                     input_ids.split(eval_batchsize),
                     attention_mask.split(eval_batchsize),
                     labels.split(eval_batchsize),
-                ):
+                ), total=len(input_ids) // eval_batchsize, desc="Batches", leave=False):
                     loss = model(
                         input_ids=batch_input_ids,
                         attention_mask=batch_attention_mask,
@@ -100,11 +100,11 @@ def main(
     # compute perplexity on full model and assemble final_data
     with th.no_grad():
         losses = []
-        for batch_input_ids, batch_attention_mask, batch_labels in zip(
+        for batch_input_ids, batch_attention_mask, batch_labels in tqdm(zip(
             input_ids.split(eval_batchsize),
             attention_mask.split(eval_batchsize),
             labels.split(eval_batchsize),
-        ):
+        ), total=len(input_ids) // eval_batchsize, desc="Batches", leave=False):
             loss = model(
                 input_ids=batch_input_ids,
                 attention_mask=batch_attention_mask,

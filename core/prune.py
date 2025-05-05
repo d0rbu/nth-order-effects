@@ -8,8 +8,8 @@ from core.surgical_gpt_neox import SurgicalGPTNeoXForCausalLM
 from core.surgical_olmo import SurgicalOlmo2ForCausalLM
 
 
-@dataclass
-class ModelUnit(frozen=True):
+@dataclass(frozen=True)
+class ModelUnit:
     block_idx: int
     unit_name: str
 
@@ -17,8 +17,8 @@ class ModelUnit(frozen=True):
         return f"{self.block_idx}_{self.unit_name}"
 
 
-@dataclass
-class ReplacedUnit(frozen=True):
+@dataclass(frozen=True)
+class ReplacedUnit:
     block_idx: int
     unit_name: str
     replacement_unit: nn.Module
