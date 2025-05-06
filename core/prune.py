@@ -25,8 +25,8 @@ class ReplacedUnit:
 
 
 ORDERED_MODEL_UNIT_CONFIGS = {
-    SurgicalGPTNeoXForCausalLM: ["self_attn", "mlp"],
-    SurgicalOlmo2ForCausalLM: ["attention", "mlp"],
+    SurgicalGPTNeoXForCausalLM: ["attention", "mlp"],
+    SurgicalOlmo2ForCausalLM: ["self_attn", "mlp"],
 }
 
 
@@ -63,11 +63,11 @@ def prune_model(model: SurgicalGPTNeoXForCausalLM | SurgicalOlmo2ForCausalLM, un
     for unit_to_remove in sorted_units:
         assert isinstance(unit_to_remove, ModelUnit), "Expected ModelUnit instance"
         assert unit_to_remove.block_idx >= 0, "Unit block index must be non-negative"
-        assert unit_to_remove <= len(model.model.layers), (
+        assert unit_to_remove.block_idx <= len(model.model.layers), (
             f"Unit block index {unit_to_remove.block_idx} out of bounds (max is {len(model.model.layers)})"
         )
 
-        block = model.layers[unit_to_remove.block_idx]
+        block = model.model.layers[unit_to_remove.block_idx]
         replacement_unit = ZeroBlock()
 
         replaced_unit = ReplacedUnit(
@@ -85,7 +85,7 @@ def prune_model(model: SurgicalGPTNeoXForCausalLM | SurgicalOlmo2ForCausalLM, un
 
     def unprune():
         for replaced_unit in replaced_units:
-            block = model.layers[replaced_unit.block_idx]
+            block = model.model.layers[replaced_unit.block_idx]
             setattr(block, replaced_unit.unit_name, replaced_unit.replacement_unit)
 
         gc.collect()
@@ -96,5 +96,10 @@ def prune_model(model: SurgicalGPTNeoXForCausalLM | SurgicalOlmo2ForCausalLM, un
 
 
 class ZeroBlock(nn.Module):
-    def forward(self: Self, x: th.Tensor, *args, **kwargs) -> th.Tensor:
-        return th.zeros_like(x)
+    def forward(self: Self, x: th.Tensor | None = None, hidden_states: th.Tensor | None = None, *args, **kwargs) -> th.Tensor:
+        if x is not None:
+            return th.zeros_like(x)
+        elif hidden_states is not None:
+            return th.zeros_like(hidden_states)
+        else:
+            raise ValueError("No input provided to ZeroBlock")

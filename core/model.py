@@ -65,8 +65,26 @@ class ModelConfig:
         self.checkpoints = sorted(checkpoints, key=lambda x: x.step)
 
 MODELS = {
-    "olmo2": ModelConfig(
+    "olmo2-1b": ModelConfig(
+        hf_name="allenai/OLMo-2-0425-1B",
+        branch_regex=re.compile(r"stage1-step(\d+)-tokens(\d+)B"),
+        revision_format="stage1-step{}-tokens{}B",
+        surgical_class=SurgicalOlmo2ForCausalLM,
+    ),
+    "olmo2-7b": ModelConfig(
         hf_name="allenai/OLMo-2-1124-7B",
+        branch_regex=re.compile(r"stage1-step(\d+)-tokens(\d+)B"),
+        revision_format="stage1-step{}-tokens{}B",
+        surgical_class=SurgicalOlmo2ForCausalLM,
+    ),
+    "olmo2-13b": ModelConfig(
+        hf_name="allenai/OLMo-2-1124-13B",
+        branch_regex=re.compile(r"stage1-step(\d+)-tokens(\d+)B"),
+        revision_format="stage1-step{}-tokens{}B",
+        surgical_class=SurgicalOlmo2ForCausalLM,
+    ),
+    "olmo2-32b": ModelConfig(
+        hf_name="allenai/OLMo-2-0325-32B",
         branch_regex=re.compile(r"stage1-step(\d+)-tokens(\d+)B"),
         revision_format="stage1-step{}-tokens{}B",
         surgical_class=SurgicalOlmo2ForCausalLM,
