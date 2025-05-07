@@ -78,28 +78,29 @@ def main(
                 )
 
                 # compute perplexity on pruned model and record
-                losses = []
+                loss = th.tensor(0.0, device=device)
                 for batch_input_ids, batch_attention_mask, batch_labels in tqdm(zip(
                     input_ids.split(eval_batchsize),
                     attention_mask.split(eval_batchsize),
                     labels.split(eval_batchsize),
                 ), total=len(input_ids) // eval_batchsize, desc="Batches", leave=False):
-                    loss = model(
+                    batch_loss = model(
                         input_ids=batch_input_ids,
                         attention_mask=batch_attention_mask,
                         labels=batch_labels,
                         track_activations=False,
+                        num_items_in_batch=batch_attention_mask.sum(),
                     )
-                    losses.append(loss.cpu())
+                    loss += batch_loss * batch_attention_mask.sum()
 
-                mean_loss = th.stack(losses).mean()
+                mean_loss = loss / attention_mask.sum()
                 pruned_ppl = float(th.exp(mean_loss))
                 pruned_data[unit.key()] = Datapoint(perplexity=pruned_ppl)
                 unprune()
     
     # compute perplexity on full model and assemble final_data
     with th.no_grad():
-        losses = []
+        loss = th.tensor(0.0, device=device)
         for batch_input_ids, batch_attention_mask, batch_labels in tqdm(zip(
             input_ids.split(eval_batchsize),
             attention_mask.split(eval_batchsize),
@@ -110,10 +111,11 @@ def main(
                 attention_mask=batch_attention_mask,
                 labels=batch_labels,
                 track_activations=False,
+                num_items_in_batch=batch_attention_mask.sum(),
             )
-            losses.append(loss.cpu())
+            loss += loss * batch_attention_mask.sum()
 
-        mean_loss = th.stack(losses).mean()
+        mean_loss = loss / attention_mask.sum()
         base_ppl = float(th.exp(mean_loss))
 
     final_data = PrunedDatapoints(
