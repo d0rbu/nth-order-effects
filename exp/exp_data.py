@@ -11,6 +11,7 @@ DTYPE_MAP = {
     "fp16": th.float16,
 }
 DATA_FILE = "data.pt"
+DATA_FILE_YAML = "data.yaml"
 METADATA_FILE = "metadata.yaml"
 CONTRIBUTIONS_OUT_SUBDIR = "contributions"
 BACKWARD_CONTRIBUTIONS_OUT_SUBDIR = "backward_contributions"

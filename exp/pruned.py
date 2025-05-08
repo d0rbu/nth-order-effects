@@ -14,7 +14,7 @@ from core.data import get_dataset
 from core.model import get_model_and_tokenizer
 from core.gradients import compute_gradients
 from core.prune import ORDERED_MODEL_UNIT_CONFIGS, prune_model, ModelUnit
-from exp.exp_data import DTYPE_MAP, DATA_FILE, METADATA_FILE, PRUNED_OUT_SUBDIR
+from exp.exp_data import DTYPE_MAP, DATA_FILE_YAML, METADATA_FILE, PRUNED_OUT_SUBDIR
 
 
 @dataclass(frozen=True)
@@ -126,7 +126,7 @@ def main(
     out_timestamp_dir = str(int(time.time() * 1000))
     final_out_dir = os.path.join(out_dir, PRUNED_OUT_SUBDIR, out_timestamp_dir)
 
-    out_filepath = os.path.join(final_out_dir, DATA_FILE)
+    out_filepath = os.path.join(final_out_dir, DATA_FILE_YAML)
     metadata_out_filepath = os.path.join(final_out_dir, METADATA_FILE)
 
     os.makedirs(final_out_dir, exist_ok=True)
