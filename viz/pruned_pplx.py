@@ -32,6 +32,7 @@ def main(
     load_in_4bit: bool = False,
     out_dir: str = "out",
     skip_first: int = 0,
+    cut_edges: int = 1,
 ):
     completed_experiments = get_exp_data(out_dir, PRUNED_OUT_SUBDIR)
     filtered_experiments = {
@@ -70,19 +71,35 @@ def main(
     assert len(checkpoint_steps) == len(all_pruned_models), "Checkpoint steps and pruned models must have the same length"
     assert len(checkpoint_steps) > 0, "No checkpoint steps found"
 
-    # Determine max run length
+    # Determine max run length and total units
     max_run_length = len(all_pruned_models[0]) - 1
+    total_units = max_run_length
 
     # For each run length > 0, plot all runs (start unit) as lines, with a colormap gradient, and always include the base line
     for run_length in range(1, max_run_length + 1):
         # Collect all start keys for this run length
         start_keys = list(all_pruned_models[0][run_length].keys())
-        num_lines = len(start_keys)
+        # Only keep runs that are not at the edges
+        filtered_start_keys = []
+        for start_key in start_keys:
+            try:
+                start_idx = int(start_key.split('_')[0])
+            except Exception:
+                try:
+                    start_idx = int(start_key)
+                except Exception:
+                    continue
+            end_idx = start_idx + run_length - 1
+            if start_idx >= cut_edges and end_idx < total_units - cut_edges:
+                filtered_start_keys.append(start_key)
+        num_lines = len(filtered_start_keys)
+        if num_lines == 0:
+            continue
         colors = COLORMAP(np.linspace(0, 1, num_lines))
 
         plt.figure(figsize=(20, 12))
         # Plot each run (start unit)
-        for idx, start_key in enumerate(start_keys):
+        for idx, start_key in enumerate(filtered_start_keys):
             y = [pruned_models[run_length][start_key]["perplexity"] for pruned_models in all_pruned_models]
             plt.plot(checkpoint_steps, y, label=f"start={start_key}", color=colors[idx])
         # Plot base line
@@ -90,7 +107,7 @@ def main(
         plt.plot(checkpoint_steps, base_y, label="base", linewidth=3, color="black", linestyle="--")
         plt.xlabel("Checkpoint step")
         plt.ylabel("Perplexity (pruned)")
-        plt.title(f"Pruned perplexity, run length {run_length}: {model_name}, {dataset_name}, maxlen={maxlen}, dtype={dtype}")
+        plt.title(f"Pruned perplexity, run length {run_length}: {model_name}, {dataset_name}, maxlen={maxlen}, dtype={dtype}, cut_edges={cut_edges}")
         plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
         plt.grid(True)
         plt.tight_layout()

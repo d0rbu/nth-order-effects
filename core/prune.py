@@ -14,7 +14,7 @@ class ModelUnit:
     unit_name: str
 
     def key(self) -> str:
-        return f"{self.block_idx}_{self.unit_name}"
+        return f"{self.unit_name}_{self.block_idx}"
 
 
 @dataclass(frozen=True)
