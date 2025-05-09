@@ -52,7 +52,16 @@ def get_exp_data(
             continue
 
         # check if the experiment is already completed
-        data_path = os.path.join(exp_path, DATA_FILE)
+        tensor_path = os.path.join(exp_path, DATA_FILE)
+        yaml_path = os.path.join(exp_path, DATA_FILE_YAML)
+
+        if os.path.exists(tensor_path):
+            data_path = tensor_path
+        elif os.path.exists(yaml_path):
+            data_path = yaml_path
+        else:
+            continue
+
         metadata_path = os.path.join(exp_path, METADATA_FILE)
         if not os.path.exists(data_path) or not os.path.exists(metadata_path):
             continue

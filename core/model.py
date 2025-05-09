@@ -153,12 +153,12 @@ MODELS = {
 
 disable_progress_bar()
 
-def get_tokenizer(model_name: str = "olmo2") -> PreTrainedTokenizerBase:
+def get_tokenizer(model_name: str = "olmo2-7b") -> PreTrainedTokenizerBase:
     assert (model_config := MODELS.get(model_name, None)), f"Model {model_name} not found in MODELS. Available models: {list(MODELS.keys())}"
 
     return AutoTokenizer.from_pretrained(model_config.hf_name, use_fast=True)
 
-def get_model_and_tokenizer(model_name: str = "olmo2", checkpoint_idx: int | None = None, model_kwargs: dict[str, Any] = None) -> tuple[PreTrainedModel, PreTrainedTokenizerBase, Checkpoint | None]:
+def get_model_and_tokenizer(model_name: str = "olmo2-7b", checkpoint_idx: int | None = None, model_kwargs: dict[str, Any] = None) -> tuple[PreTrainedModel, PreTrainedTokenizerBase, Checkpoint | None]:
     assert (model_config := MODELS.get(model_name, None)), f"Model {model_name} not found in MODELS. Available models: {list(MODELS.keys())}"
 
     tokenizer = get_tokenizer(model_name)

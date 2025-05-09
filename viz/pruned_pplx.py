@@ -2,12 +2,21 @@ import os
 import yaml
 import arguably
 import matplotlib.pyplot as plt
+import numpy as np
 from tqdm import tqdm
 
 from exp.exp_data import get_exp_data, PRUNED_OUT_SUBDIR, DATA_FILE_YAML
 from core.model import MODELS
 
-FIGURES_DIR = "figures/pruned_pplx"
+def figure_key(
+    model_name: str,
+    dataset_name: str,
+    maxlen: int,
+    dtype: str,
+    load_in_8bit: bool,
+    load_in_4bit: bool,
+) -> str:
+    return f"model={model_name},dataset={dataset_name},maxlen={maxlen},dtype={dtype},load_in_8bit={load_in_8bit},load_in_4bit={load_in_4bit}"
 
 @arguably.command
 def main(
@@ -19,6 +28,7 @@ def main(
     load_in_8bit: bool = False,
     load_in_4bit: bool = False,
     out_dir: str = "out",
+    skip_first: int = 0,
 ):
     completed_experiments = get_exp_data(out_dir, PRUNED_OUT_SUBDIR)
     filtered_experiments = {
@@ -38,8 +48,9 @@ def main(
     model_config = MODELS[model_name]
     ordered_units = model_config.surgical_class.unit_names if hasattr(model_config.surgical_class, 'unit_names') else None
 
-    # Gather all pruned perplexities by layer/unit for each checkpoint
-    all_layer_unit_ppl = dict()  # (block_idx, unit_name) -> [ppl at each checkpoint]
+    # Gather all pruned perplexities by unit for each checkpoint
+    all_unit_ppl = dict()  # unit_key -> [ppl at each checkpoint]
+    base_ppl = []
     checkpoint_steps = []
     for experiment, exp_path in tqdm(sorted_experiments, desc="Loading data", total=len(sorted_experiments), leave=False):
         data_path = os.path.join(exp_path, DATA_FILE_YAML)
@@ -48,32 +59,51 @@ def main(
         checkpoint_steps.append(experiment.checkpoint_step)
         pruned_models = data["pruned_models"]
         for unit_key, dp in pruned_models.items():
-            if unit_key not in all_layer_unit_ppl:
-                all_layer_unit_ppl[unit_key] = []
-            all_layer_unit_ppl[unit_key].append(dp["perplexity"])
+            if unit_key not in all_unit_ppl:
+                all_unit_ppl[unit_key] = []
+            all_unit_ppl[unit_key].append(dp["perplexity"])
+        # base model
+        base_ppl.append(data["base_model"]["perplexity"])
 
-    # Group unit_keys by layer
-    layer_to_unitkeys = dict()
-    for unit_key in all_layer_unit_ppl:
+    # Optionally skip the first n datapoints
+    if skip_first > 0:
+        checkpoint_steps = checkpoint_steps[skip_first:]
+        for unit_key in all_unit_ppl:
+            all_unit_ppl[unit_key] = all_unit_ppl[unit_key][skip_first:]
+        base_ppl = base_ppl[skip_first:]
+
+    # Sort unit_keys for consistent legend (by block then unit)
+    def unit_sort_key(unit_key):
         block_idx, unit_name = unit_key.split("_", 1)
-        if block_idx not in layer_to_unitkeys:
-            layer_to_unitkeys[block_idx] = []
-        layer_to_unitkeys[block_idx].append(unit_key)
+        # try to sort attn before mlp if possible
+        return (int(block_idx), unit_name)
+    sorted_unit_keys = sorted(all_unit_ppl.keys(), key=unit_sort_key)
 
-    os.makedirs(FIGURES_DIR, exist_ok=True)
-    for block_idx, unit_keys in layer_to_unitkeys.items():
-        plt.figure(figsize=(10, 6))
-        for unit_key in unit_keys:
-            unit_name = unit_key.split("_", 1)[1]
-            plt.plot(checkpoint_steps, all_layer_unit_ppl[unit_key], label=f"{unit_name}")
-        plt.xlabel("Checkpoint step")
-        plt.ylabel("Perplexity (pruned)")
-        plt.title(f"Layer {block_idx} pruned perplexity by unit")
-        plt.legend()
-        plt.grid(True)
-        plt.tight_layout()
-        plt.savefig(os.path.join(FIGURES_DIR, f"layer_{block_idx}_pruned_pplx.png"))
-        plt.close()
+    key = figure_key(model_name, dataset_name, maxlen, dtype, load_in_8bit, load_in_4bit)
+    figures_dir = os.path.join("figures_pruned", key)
+    os.makedirs(figures_dir, exist_ok=True)
+
+    plt.figure(figsize=(20, 12))
+    all_values = []
+    for unit_key in sorted_unit_keys:
+        block_idx, unit_name = unit_key.split("_", 1)
+        label = f"{unit_name}_{block_idx}"
+        values = np.array(all_unit_ppl[unit_key])
+        all_values.append(values)
+        plt.plot(checkpoint_steps, values, label=label)
+    # Add base model line
+    base_ppl_arr = np.array(base_ppl)
+    all_values.append(base_ppl_arr)
+    plt.plot(checkpoint_steps, base_ppl_arr, label="base", linewidth=3, color="black", linestyle="--")
+    plt.xlabel("Checkpoint step")
+    plt.ylabel("Perplexity (pruned)")
+    plt.title(f"Pruned perplexity by unit and base: {model_name}, {dataset_name}, maxlen={maxlen}, dtype={dtype}")
+    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.grid(True)
+    plt.tight_layout()
+
+    plt.savefig(os.path.join(figures_dir, f"pruned_pplx_all_units.png"))
+    plt.close()
 
 if __name__ == "__main__":
     arguably.run() 

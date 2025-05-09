@@ -105,7 +105,7 @@ async def sweep_task(
 @arguably.command
 def sweep(
     *args,
-    model_name: str = "olmo2",
+    model_name: str = "olmo2-7b",
     dataset_name: str = "redpajama-1",
     maxlen: int = 128,
     device: str = "cuda",

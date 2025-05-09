@@ -14,7 +14,7 @@ from exp.exp_data import DTYPE_MAP, DATA_FILE, METADATA_FILE, GRADIENT_SCALING_O
 
 def main(
     *args,
-    model_name: str = "olmo2",
+    model_name: str = "olmo2-7b",
     dataset_name: str = "redpajama-nano",
     checkpoint_idx: int | None = None,
     maxlen: int = 512,

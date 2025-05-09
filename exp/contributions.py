@@ -23,7 +23,7 @@ class DeltaLoss:
 
 def main(
     *args,
-    model_name: str = "olmo2",
+    model_name: str = "olmo2-7b",
     dataset_name: str = "redpajama-nano",
     checkpoint_idx: int | None = None,
     maxlen: int = 512,
