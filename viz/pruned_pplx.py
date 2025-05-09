@@ -8,6 +8,9 @@ from tqdm import tqdm
 from exp.exp_data import get_exp_data, PRUNED_OUT_SUBDIR, DATA_FILE_YAML
 from core.model import MODELS
 
+FIGURES_PRUNED_DIR = "figures_pruned"
+COLORMAP = plt.get_cmap("viridis")
+
 def figure_key(
     model_name: str,
     dataset_name: str,
@@ -45,65 +48,54 @@ def main(
     assert len(filtered_experiments) > 0, "No experiments found with the given parameters"
     sorted_experiments = sorted(filtered_experiments.items(), key=lambda x: x[0].checkpoint_idx)
 
-    model_config = MODELS[model_name]
-    ordered_units = model_config.surgical_class.unit_names if hasattr(model_config.surgical_class, 'unit_names') else None
+    key = figure_key(model_name, dataset_name, maxlen, dtype, load_in_8bit, load_in_4bit)
+    figures_dir = os.path.join(FIGURES_PRUNED_DIR, key)
+    os.makedirs(figures_dir, exist_ok=True)
 
-    # Gather all pruned perplexities by unit for each checkpoint
-    all_unit_ppl = dict()  # unit_key -> [ppl at each checkpoint]
-    base_ppl = []
+    # Load all pruned results for all checkpoints
+    all_pruned_models = []  # list of [list of dicts] for each checkpoint
     checkpoint_steps = []
     for experiment, exp_path in tqdm(sorted_experiments, desc="Loading data", total=len(sorted_experiments), leave=False):
         data_path = os.path.join(exp_path, DATA_FILE_YAML)
         with open(data_path, "r") as f:
-            data = yaml.safe_load(f)
+            pruned_models = yaml.safe_load(f)
+        all_pruned_models.append(pruned_models)
         checkpoint_steps.append(experiment.checkpoint_step)
-        pruned_models = data["pruned_models"]
-        for unit_key, dp in pruned_models.items():
-            if unit_key not in all_unit_ppl:
-                all_unit_ppl[unit_key] = []
-            all_unit_ppl[unit_key].append(dp["perplexity"])
-        # base model
-        base_ppl.append(data["base_model"]["perplexity"])
 
     # Optionally skip the first n datapoints
     if skip_first > 0:
         checkpoint_steps = checkpoint_steps[skip_first:]
-        for unit_key in all_unit_ppl:
-            all_unit_ppl[unit_key] = all_unit_ppl[unit_key][skip_first:]
-        base_ppl = base_ppl[skip_first:]
+        all_pruned_models = all_pruned_models[skip_first:]
 
-    # Sort unit_keys for consistent legend (by block then unit)
-    def unit_sort_key(unit_key):
-        block_idx, unit_name = unit_key.split("_", 1)
-        # try to sort attn before mlp if possible
-        return (int(block_idx), unit_name)
-    sorted_unit_keys = sorted(all_unit_ppl.keys(), key=unit_sort_key)
+    assert len(checkpoint_steps) == len(all_pruned_models), "Checkpoint steps and pruned models must have the same length"
+    assert len(checkpoint_steps) > 0, "No checkpoint steps found"
 
-    key = figure_key(model_name, dataset_name, maxlen, dtype, load_in_8bit, load_in_4bit)
-    figures_dir = os.path.join("figures_pruned", key)
-    os.makedirs(figures_dir, exist_ok=True)
+    # Determine max run length
+    max_run_length = len(all_pruned_models[0]) - 1
 
-    plt.figure(figsize=(20, 12))
-    all_values = []
-    for unit_key in sorted_unit_keys:
-        block_idx, unit_name = unit_key.split("_", 1)
-        label = f"{unit_name}_{block_idx}"
-        values = np.array(all_unit_ppl[unit_key])
-        all_values.append(values)
-        plt.plot(checkpoint_steps, values, label=label)
-    # Add base model line
-    base_ppl_arr = np.array(base_ppl)
-    all_values.append(base_ppl_arr)
-    plt.plot(checkpoint_steps, base_ppl_arr, label="base", linewidth=3, color="black", linestyle="--")
-    plt.xlabel("Checkpoint step")
-    plt.ylabel("Perplexity (pruned)")
-    plt.title(f"Pruned perplexity by unit and base: {model_name}, {dataset_name}, maxlen={maxlen}, dtype={dtype}")
-    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-    plt.grid(True)
-    plt.tight_layout()
+    # For each run length > 0, plot all runs (start unit) as lines, with a colormap gradient, and always include the base line
+    for run_length in range(1, max_run_length + 1):
+        # Collect all start keys for this run length
+        start_keys = list(all_pruned_models[0][run_length].keys())
+        num_lines = len(start_keys)
+        colors = COLORMAP(np.linspace(0, 1, num_lines))
 
-    plt.savefig(os.path.join(figures_dir, f"pruned_pplx_all_units.png"))
-    plt.close()
+        plt.figure(figsize=(20, 12))
+        # Plot each run (start unit)
+        for idx, start_key in enumerate(start_keys):
+            y = [pruned_models[run_length][start_key]["perplexity"] for pruned_models in all_pruned_models]
+            plt.plot(checkpoint_steps, y, label=f"start={start_key}", color=colors[idx])
+        # Plot base line
+        base_y = [pruned_models[0]["base"]["perplexity"] for pruned_models in all_pruned_models]
+        plt.plot(checkpoint_steps, base_y, label="base", linewidth=3, color="black", linestyle="--")
+        plt.xlabel("Checkpoint step")
+        plt.ylabel("Perplexity (pruned)")
+        plt.title(f"Pruned perplexity, run length {run_length}: {model_name}, {dataset_name}, maxlen={maxlen}, dtype={dtype}")
+        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig(os.path.join(figures_dir, f"pruned_pplx_runlen_{run_length}.png"))
+        plt.close()
 
 if __name__ == "__main__":
     arguably.run() 

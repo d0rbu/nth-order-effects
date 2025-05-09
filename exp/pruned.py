@@ -2,6 +2,8 @@ import os
 import yaml
 import time
 from dataclasses import dataclass, asdict
+import itertools
+from typing import TypeAlias
 
 import arguably
 import torch as th
@@ -16,17 +18,11 @@ from core.gradients import compute_gradients
 from core.prune import ORDERED_MODEL_UNIT_CONFIGS, prune_model, ModelUnit
 from exp.exp_data import DTYPE_MAP, DATA_FILE_YAML, METADATA_FILE, PRUNED_OUT_SUBDIR
 
-
 @dataclass(frozen=True)
 class Datapoint:
     perplexity: float
 
-
-@dataclass(frozen=True)
-class PrunedDatapoints:
-    base_model: Datapoint
-    pruned_models: dict[str, Datapoint]
-
+PrunedSweepResults: TypeAlias = list[dict[str, Datapoint]]
 
 def main(
     *args,
@@ -52,7 +48,6 @@ def main(
 
     ordered_model_units = ORDERED_MODEL_UNIT_CONFIGS.get(type(model))
     assert ordered_model_units is not None, f"Unsupported model type: {type(model)}"
-    pruned_data = {}
 
     print("Getting perplexity on training set")
     # prepare inputs for perplexity evaluation
@@ -63,19 +58,22 @@ def main(
     labels[attention_mask] = input_ids[attention_mask]
     dataset_size = input_ids.size(0)
     eval_batchsize = batchsize if batchsize > 0 else dataset_size
-    with th.no_grad():
-        for block_idx, block in tqdm(enumerate(model.model.layers), total=len(model.model.layers), desc="Blocks", leave=False):
-            for unit_name in tqdm(ordered_model_units, total=len(ordered_model_units), desc="Units", leave=False):
-                assert hasattr(block, unit_name), f"Model {model_name} block {block_idx} does not have unit {unit_name}"
-                unit = ModelUnit(
-                    block_idx=block_idx,
-                    unit_name=unit_name,
-                )
 
-                unprune = prune_model(
-                    model,
-                    units_to_remove=unit,
-                )
+    # Build a flat list of all ModelUnits in order
+    all_units = []
+    for block_idx, block in enumerate(model.model.layers):
+        for unit_name in ordered_model_units:
+            all_units.append(ModelUnit(block_idx=block_idx, unit_name=unit_name))
+
+    N = len(all_units)
+    pruned_models: PrunedSweepResults = [{} for _ in range(N+1)]  # pruned_models[run_length][start_idx] = Datapoint
+
+    with th.no_grad():
+        # Try all contiguous runs of units (length 1, 2, ..., N)
+        for run_length in tqdm(range(1, N+1), desc="Run lengths", leave=True):
+            for start in tqdm(range(N - run_length + 1), desc=f"Starts (run_length={run_length})", leave=False):
+                units_to_prune = all_units[start:start+run_length]
+                unprune = prune_model(model, set(units_to_prune))
 
                 # compute perplexity on pruned model and record
                 loss = th.tensor(0.0, device=device)
@@ -83,7 +81,7 @@ def main(
                     input_ids.split(eval_batchsize),
                     attention_mask.split(eval_batchsize),
                     labels.split(eval_batchsize),
-                ), total=len(input_ids) // eval_batchsize, desc="Batches", leave=False):
+                ), total=len(input_ids) // eval_batchsize, desc=f"Batches (prune {run_length}, start {start})", leave=False):
                     batch_loss = model(
                         input_ids=batch_input_ids,
                         attention_mask=batch_attention_mask,
@@ -95,7 +93,8 @@ def main(
 
                 mean_loss = loss / attention_mask.sum()
                 pruned_ppl = float(th.exp(mean_loss))
-                pruned_data[unit.key()] = Datapoint(perplexity=pruned_ppl)
+                start_unit_key = all_units[start].key()
+                pruned_models[run_length][start_unit_key] = Datapoint(perplexity=pruned_ppl)
                 unprune()
     
     # compute perplexity on full model and assemble final_data
@@ -118,11 +117,9 @@ def main(
         mean_loss = loss / attention_mask.sum()
         base_ppl = float(th.exp(mean_loss))
 
-    final_data = PrunedDatapoints(
-        base_model=Datapoint(perplexity=base_ppl),
-        pruned_models=pruned_data,
-    )
+    pruned_models[0] = {"base": Datapoint(perplexity=base_ppl)}
 
+    # Save as list of dicts of asdict(Datapoint)
     out_timestamp_dir = str(int(time.time() * 1000))
     final_out_dir = os.path.join(out_dir, PRUNED_OUT_SUBDIR, out_timestamp_dir)
 
@@ -131,7 +128,7 @@ def main(
 
     os.makedirs(final_out_dir, exist_ok=True)
     with open(out_filepath, "w") as f:
-        yaml.dump(asdict(final_data), f)
+        yaml.dump([{k: asdict(v) for k, v in d.items()} for d in pruned_models], f)
 
     print(f"Writing metadata to {metadata_out_filepath}")
     with open(metadata_out_filepath, "w") as f:
