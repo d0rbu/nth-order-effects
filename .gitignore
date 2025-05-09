@@ -174,8 +174,7 @@ cython_debug/
 out
 
 figures
-figures_backward
-figures_gradient_scaling
+figures_*
 
 node_modules
 gradients.json
