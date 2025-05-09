@@ -79,27 +79,19 @@ def main(
     for run_length in range(1, max_run_length + 1):
         # Collect all start keys for this run length
         start_keys = list(all_pruned_models[0][run_length].keys())
+        # Robustly split start_key into unit_name and block_idx, even if unit_name contains underscores
+        deconstructed_start_keys = [(int(block_idx), unit_name) for unit_name, block_idx in [start_key.rsplit('_', 1) for start_key in start_keys]]
+        deconstructed_ordered_start_keys = sorted(deconstructed_start_keys)
         # Only keep runs that are not at the edges
-        filtered_start_keys = []
-        for start_key in start_keys:
-            try:
-                start_idx = int(start_key.split('_')[0])
-            except Exception:
-                try:
-                    start_idx = int(start_key)
-                except Exception:
-                    continue
-            end_idx = start_idx + run_length - 1
-            if start_idx >= cut_edges and end_idx < total_units - cut_edges:
-                filtered_start_keys.append(start_key)
-        num_lines = len(filtered_start_keys)
+        ordered_start_keys = [f"{unit_name}_{block_idx}" for block_idx, unit_name in deconstructed_ordered_start_keys[cut_edges:-cut_edges]]
+        num_lines = len(ordered_start_keys)
         if num_lines == 0:
             continue
         colors = COLORMAP(np.linspace(0, 1, num_lines))
 
         plt.figure(figsize=(20, 12))
         # Plot each run (start unit)
-        for idx, start_key in enumerate(filtered_start_keys):
+        for idx, start_key in enumerate(ordered_start_keys):
             y = [pruned_models[run_length][start_key]["perplexity"] for pruned_models in all_pruned_models]
             plt.plot(checkpoint_steps, y, label=f"start={start_key}", color=colors[idx])
         # Plot base line
