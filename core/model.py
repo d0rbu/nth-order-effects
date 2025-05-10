@@ -37,6 +37,7 @@ class ModelConfig:
     branch_regex: re.Pattern
     revision_format: str
     surgical_class: th.nn.Module
+    tokenizer_has_padding_token: bool = True
     checkpoints: list[Checkpoint] = None
 
     def __post_init__(self):
@@ -94,60 +95,70 @@ MODELS = {
         branch_regex=re.compile(r"step(\d+)"),
         revision_format="step{}",
         surgical_class=SurgicalGPTNeoXForCausalLM,
+        tokenizer_has_padding_token=False,
     ),
     "pythia31m": ModelConfig(
         hf_name="EleutherAI/pythia-31m",
         branch_regex=re.compile(r"step(\d+)"),
         revision_format="step{}",
         surgical_class=SurgicalGPTNeoXForCausalLM,
+        tokenizer_has_padding_token=False,
     ),
     "pythia70m": ModelConfig(
         hf_name="EleutherAI/pythia-70m-deduped",
         branch_regex=re.compile(r"step(\d+)"),
         revision_format="step{}",
         surgical_class=SurgicalGPTNeoXForCausalLM,
+        tokenizer_has_padding_token=False,
     ),
     "pythia160m": ModelConfig(
         hf_name="EleutherAI/pythia-160m-deduped",
         branch_regex=re.compile(r"step(\d+)"),
         revision_format="step{}",
         surgical_class=SurgicalGPTNeoXForCausalLM,
+        tokenizer_has_padding_token=False,
     ),
     "pythia410m": ModelConfig(
         hf_name="EleutherAI/pythia-410m-deduped",
         branch_regex=re.compile(r"step(\d+)"),
         revision_format="step{}",
         surgical_class=SurgicalGPTNeoXForCausalLM,
+        tokenizer_has_padding_token=False,
     ),
     "pythia1b": ModelConfig(
         hf_name="EleutherAI/pythia-1b-deduped",
         branch_regex=re.compile(r"step(\d+)"),
         revision_format="step{}",
         surgical_class=SurgicalGPTNeoXForCausalLM,
+        tokenizer_has_padding_token=False,
     ),
     "pythia1.4b": ModelConfig(
         hf_name="EleutherAI/pythia-1.4b-deduped",
         branch_regex=re.compile(r"step(\d+)"),
         revision_format="step{}",
         surgical_class=SurgicalGPTNeoXForCausalLM,
+        tokenizer_has_padding_token=False,
     ),
     "pythia2.8b": ModelConfig(
         hf_name="EleutherAI/pythia-2.8b-deduped",
         branch_regex=re.compile(r"step(\d+)"),
         revision_format="step{}",
         surgical_class=SurgicalGPTNeoXForCausalLM,
+        tokenizer_has_padding_token=False,
     ),
     "pythia6.9b": ModelConfig(
         hf_name="EleutherAI/pythia-6.9b-deduped",
         branch_regex=re.compile(r"step(\d+)"),
         revision_format="step{}",
         surgical_class=SurgicalGPTNeoXForCausalLM,
+        tokenizer_has_padding_token=False,
     ),
     "pythia12b": ModelConfig(
         hf_name="EleutherAI/pythia-12b-deduped",
         branch_regex=re.compile(r"step(\d+)"),
         revision_format="step{}",
         surgical_class=SurgicalGPTNeoXForCausalLM,
+        tokenizer_has_padding_token=False,
     ),
 }
 
@@ -156,7 +167,12 @@ disable_progress_bar()
 def get_tokenizer(model_name: str = "olmo2-7b") -> PreTrainedTokenizerBase:
     assert (model_config := MODELS.get(model_name, None)), f"Model {model_name} not found in MODELS. Available models: {list(MODELS.keys())}"
 
-    return AutoTokenizer.from_pretrained(model_config.hf_name, use_fast=True)
+    tokenizer = AutoTokenizer.from_pretrained(model_config.hf_name, use_fast=True)
+
+    if not model_config.tokenizer_has_padding_token:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    return tokenizer
 
 def get_model_and_tokenizer(model_name: str = "olmo2-7b", checkpoint_idx: int | None = None, model_kwargs: dict[str, Any] = None) -> tuple[PreTrainedModel, PreTrainedTokenizerBase, Checkpoint | None]:
     assert (model_config := MODELS.get(model_name, None)), f"Model {model_name} not found in MODELS. Available models: {list(MODELS.keys())}"
